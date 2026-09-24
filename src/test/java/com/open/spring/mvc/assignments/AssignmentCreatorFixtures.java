@@ -50,7 +50,7 @@ final class AssignmentCreatorFixtures {
     }
 
     static Assignment assignment(Long id, String name, Person... creators) {
-        Assignment assignment = new Assignment(name, "auto-created", "[CONTENT_URL: csa/" + name + "/]", 1.0, "10/25/2026");
+        Assignment assignment = new Assignment(name, "auto-created", "[CONTENT_URL: csa/" + name + "/]", 1.0, "10/25/2026", "file");
         assignment.setId(id);
         assignment.getCreators().addAll(Arrays.asList(creators));
         return assignment;

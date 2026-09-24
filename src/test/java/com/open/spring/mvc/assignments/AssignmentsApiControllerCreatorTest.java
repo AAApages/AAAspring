@@ -92,7 +92,7 @@ class AssignmentsApiControllerCreatorTest {
 
     private ResponseEntity<?> autoCreate(UserDetails caller, List<String> creatorUids) {
         return controller.autoCreateAssignment(
-            "Assignment Creator Permissions Pilot", CONTENT_URL, "", null, null, creatorUids, caller);
+            "Assignment Creator Permissions Pilot", CONTENT_URL, "", null, null, null, null, creatorUids, caller);
     }
 
     @SuppressWarnings("unchecked")
@@ -115,7 +115,7 @@ class AssignmentsApiControllerCreatorTest {
     void aPageDescriptionIsStoredWithoutTheLegacyContentUrlMarker() {
         controller.autoCreateAssignment(
             "Assignment Creator Permissions Pilot", CONTENT_URL, "  Play the game  ",
-            null, null, null, caller("admin", "ROLE_ADMIN"));
+            null, null, null, null, null, caller("admin", "ROLE_ADMIN"));
 
         ArgumentCaptor<Assignment> saved = ArgumentCaptor.forClass(Assignment.class);
         verify(assignmentRepo).save(saved.capture());
