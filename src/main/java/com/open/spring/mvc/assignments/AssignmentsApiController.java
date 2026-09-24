@@ -71,6 +71,8 @@ public class AssignmentsApiController {
 
     @Autowired
     private AssignmentRubricService rubricService;
+
+    @Autowired
     private AssignmentAuthorizationService assignmentAuthorizationService;
 
     @Autowired
@@ -93,7 +95,6 @@ public class AssignmentsApiController {
         public String resourceFilename;
         public String resourceStoragePath;
         public String resourceUploadedBy;
-        public String assignmentType;  // ADD THIS
         /** Owner uids; null on endpoints that do not load the creator relationship. */
         public List<String> creatorUids;
 
@@ -117,7 +118,6 @@ public class AssignmentsApiController {
             this.resourceFilename = assignment.getResourceFilename();
             this.resourceStoragePath = assignment.getResourceStoragePath();
             this.resourceUploadedBy = extractResourceUploader(assignment);
-            this.assignmentType = assignment.getAssignmentType();  // ADD THIS
         }
 
         private static String extractResourceUploader(Assignment assignment) {
@@ -297,6 +297,7 @@ public class AssignmentsApiController {
             @RequestParam(required = false) String dueDate,
             @RequestParam(required = false) String assignmentType,
             @RequestParam(required = false) String pageContent,
+            @RequestParam(required = false) List<String> creatorUids,
             @AuthenticationPrincipal UserDetails userDetails
     ) {
         // Debug log input
@@ -365,21 +366,16 @@ public class AssignmentsApiController {
         Assignment existing = assignmentRepo.findFirstByContentUrlOrderByIdAsc(canonicalUrl);
 
         if (existing != null) {
-            // Return existing assignment (already has auto-generated ID)
-            // This avoids duplicate assignments for the same page
-            Assignment existingAssignment = existing.get(0);
-            if (assignmentType != null && !assignmentType.isBlank()
-                    && !assignmentType.equalsIgnoreCase(existingAssignment.getAssignmentType())) {
-                existingAssignment.setAssignmentType(assignmentType.trim());
-                existingAssignment = assignmentRepo.save(existingAssignment);
-            }
-            logger.info("Assignment already exists for contentUrl: " + contentUrl + ", ID: " + existingAssignment.getId());
-            AssignmentDto dto = new AssignmentDto(existingAssignment);
-            return ResponseEntity.ok(dto);
-            // This avoids duplicate assignments for the same page.
-            // Ownership still has to be resynchronized here, otherwise frontmatter edits
-            // would only ever reach assignments on their very first deploy.
+            // Return existing assignment (already has auto-generated ID) — avoids duplicate
+            // assignments for the same page. Ownership still has to be resynchronized here,
+            // otherwise frontmatter edits would only ever reach assignments on their very
+            // first deploy.
             Assignment assignment = existing;
+            if (assignmentType != null && !assignmentType.isBlank()
+                    && !assignmentType.equalsIgnoreCase(assignment.getAssignmentType())) {
+                assignment.setAssignmentType(assignmentType.trim());
+                assignment = assignmentRepo.save(assignment);
+            }
             if (synchronizeCreators
                     && assignmentCreatorSyncService.applyCreators(assignment, resolvedCreators)) {
                 assignment = assignmentRepo.save(assignment);

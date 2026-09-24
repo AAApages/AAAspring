@@ -309,7 +309,6 @@ public class ModelInit {
                 Assignment assignmentFound = assignmentJpaRepository.findByName(assignment.getName());
                 if (assignmentFound == null) { // if the assignment doesn't exist
                     Assignment newAssignment = new Assignment(assignment.getName(), assignment.getType(), assignment.getDescription(), assignment.getPoints(), assignment.getDueDate(), assignment.getAssignmentType());
-                Assignment newAssignment = new Assignment(assignment.getName(), assignment.getType(), assignment.getDescription(), assignment.getPoints(), assignment.getDueDate(), assignment.getAssignmentType());
                     assignmentJpaRepository.save(newAssignment);
                 }
             }

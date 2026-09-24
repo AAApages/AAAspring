@@ -76,6 +76,9 @@ public class AssignmentSubmissionAPIController {
 
     @Autowired
     private AssignmentAiGradingService aiGradingService;
+
+    @Autowired
+    private AssignmentAuthorizationService assignmentAuthorizationService;
     
     /**
      * A DTO class for returning only necessary assignment submission details.
@@ -416,13 +419,13 @@ public class AssignmentSubmissionAPIController {
         if (currentUser == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Authentication required"));
         }
-        if (!canGradeOrDeleteSubmission(currentUser)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Admin or teacher access required"));
-        }
 
         AssignmentSubmission submission = submissionRepo.findById(submissionId).orElse(null);
         if (submission == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Submission not found"));
+        }
+        if (!canManageSubmission(currentUser, submission)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", MANAGE_DENIED_MESSAGE));
         }
 
         try {
@@ -697,11 +700,9 @@ public class AssignmentSubmissionAPIController {
                 && !AssignmentAiGradingService.isGithubBlobUrl(url)) {
             return "A github_issue submission must be a public GitHub issue or file link";
         }
-        if ("link".equalsIgnoreCase(type)
-                && (!AssignmentAiGradingService.isGithubIssueUrl(url)
-                && !AssignmentAiGradingService.isGithubBlobUrl(url))) {
-            return "A link submission must be a public GitHub issue or file link";
-        }
+        // "link" is deliberately unrestricted — any URL is accepted. It just isn't
+        // AI-gradable unless it happens to be a GitHub issue/file link, which
+        // AssignmentAiGradingService already handles gracefully (notGradeable, not an error).
         if ("code".equalsIgnoreCase(type) && !AssignmentAiGradingService.isGistUrl(url)) {
             return "A code submission must include a valid Gist link";
         }
