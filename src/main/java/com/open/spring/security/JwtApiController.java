@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
@@ -31,9 +30,6 @@ import jakarta.servlet.http.HttpServletResponse;
 @RestController
 public class JwtApiController {
 
-	private static final String JWT_COOKIE_NAME = "jwt_java_spring";
-	private static final String JWT_COOKIE_PATH = "/api";
-
 	@Autowired
 	private AuthenticationManager authenticationManager;
 
@@ -46,26 +42,10 @@ public class JwtApiController {
 	@Autowired
 	private PersonJpaRepository personJpaRepository;
 
-	@Value("${jwt.cookie.secure:true}")  // Defaults to production setting if property not found
-	private boolean cookieSecure;
+	@Autowired
+	private CookieFactory cookieFactory;
 
-	@Value("${jwt.cookie.same-site:None}")  // Defaults to production setting if property not found
-	private String cookieSameSite;
-
-	@Value("${jwt.cookie.max-age:604800}")  // 1 week
-	private long cookieMaxAge;
-
-	@Value("${server.servlet.session.cookie.name:sess_java_spring}")
-	private String sessionCookieName;
-
-	@Value("${server.servlet.session.cookie.secure:true}")
-	private boolean sessionCookieSecure;
-
-	@Value("${server.servlet.session.cookie.same-site:None}")
-	private String sessionCookieSameSite;
-
-	@Value("${server.servlet.session.cookie.domain:}")
-	private String sessionCookieDomain;
+	// Cookie attributes live in CookieFactory.
 
 	@PostMapping("/authenticate")
 	public ResponseEntity<?> createAuthenticationToken(@RequestBody Person authenticationRequest, HttpServletRequest request) throws Exception {
@@ -94,21 +74,10 @@ public class JwtApiController {
 			return new ResponseEntity<>("Token generation failed", HttpStatus.INTERNAL_SERVER_ERROR);
 		}
 
-		// Build cookie with development-friendly settings
-		// For localhost: allow HTTP and SameSite=Lax
-		// For production: require HTTPS and SameSite=None; Secure
-		// Domain is set to .opencodingsociety.com to allow sharing across subdomains
-		// (spring.opencodingsociety.com, pages.opencodingsociety.com, etc.)
-		ResponseCookie.ResponseCookieBuilder cookieBuilder = ResponseCookie.from(JWT_COOKIE_NAME, token)
-			.httpOnly(true)
-			.secure(cookieSecure)
-			.path(JWT_COOKIE_PATH)
-			.maxAge(cookieMaxAge)  // Configured via jwt.cookie.max-age in application.properties
-			.sameSite(cookieSameSite);
-
-		applyJwtCookieScope(cookieBuilder);
-		
-		ResponseCookie tokenCookie = cookieBuilder.build();
+		// Built by CookieFactory so that login and logout always agree on name,
+		// domain and path -- a delete cookie that differs in any of the three is a
+		// different cookie, and the original survives logout.
+		ResponseCookie tokenCookie = cookieFactory.jwtCookie(token);
 
 		return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, tokenCookie.toString()).body(resolvedUid + " was authenticated successfully");
 	}
@@ -154,62 +123,23 @@ public class JwtApiController {
 			// Perform logout using SecurityContextLogoutHandler
 			logoutHandler.logout(request, response, authentication);
 
-			// Expire the JWT token immediately by setting a past expiration date
-			ResponseCookie.ResponseCookieBuilder jwtCookieBuilder = ResponseCookie.from(JWT_COOKIE_NAME, "")
-					.httpOnly(true)
-					.secure(cookieSecure)
-					.path(JWT_COOKIE_PATH)
-					.maxAge(0)  // Set maxAge to 0 to expire the cookie immediately
-					.sameSite(cookieSameSite);
-			applyJwtCookieScope(jwtCookieBuilder);
-			ResponseCookie jwtCookie = jwtCookieBuilder.build();
-			ResponseCookie jwtHostOnlyCookie = ResponseCookie.from(JWT_COOKIE_NAME, "")
-					.httpOnly(true)
-					.secure(cookieSecure)
-					.path(JWT_COOKIE_PATH)
-					.maxAge(0)
-					.sameSite(cookieSameSite)
-					.build();
+			// Mirrors the cookies issued at login, domain included.
+			ResponseCookie jwtCookie = cookieFactory.expiredJwtCookie();
+			ResponseCookie sessionCookie = cookieFactory.expiredSessionCookie();
 
-			ResponseCookie.ResponseCookieBuilder sessionCookieBuilder = ResponseCookie.from(sessionCookieName, "")
-					.httpOnly(true)
-					.secure(sessionCookieSecure)
-					.path("/")
-					.maxAge(0)
-					.sameSite(sessionCookieSameSite);
-			if (!sessionCookieDomain.isBlank()) {
-				sessionCookieBuilder.domain(sessionCookieDomain);
-			}
-			ResponseCookie sessionCookie = sessionCookieBuilder.build();
-	
 			// Set the cookies in the response to effectively "remove" them
 			response.addHeader(HttpHeaders.SET_COOKIE, jwtCookie.toString());
-			response.addHeader(HttpHeaders.SET_COOKIE, jwtHostOnlyCookie.toString());
-			if (!cookieSecure) {
-				// Cleanup for legacy local dev cookies that were created with Domain=localhost.
-				ResponseCookie jwtLegacyLocalhostCookie = ResponseCookie.from(JWT_COOKIE_NAME, "")
-						.httpOnly(true)
-						.secure(false)
-						.path(JWT_COOKIE_PATH)
-						.maxAge(0)
-						.sameSite(cookieSameSite)
-						.domain("localhost")
-						.build();
-				response.addHeader(HttpHeaders.SET_COOKIE, jwtLegacyLocalhostCookie.toString());
-			}
 			response.addHeader(HttpHeaders.SET_COOKIE, sessionCookie.toString());
+			// Also clears any pre-CookieFactory JWT cookie shape a browser might still be
+			// holding (host-only, or Domain=localhost from local dev).
+			response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.expiredJwtHostOnlyCookie().toString());
+			response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.expiredJwtLegacyLocalhostCookie().toString());
 	
 			// Optional: You can also clear the "Authorization" header if needed
 			response.setHeader("Authorization", null);
 	
 			// Redirect user to home page after logout
 			return "redirect:/home";
-		}
-}
-
-	private void applyJwtCookieScope(ResponseCookie.ResponseCookieBuilder cookieBuilder) {
-		if (cookieSecure) {
-			cookieBuilder.domain(".opencodingsociety.com");
 		}
 	}
 

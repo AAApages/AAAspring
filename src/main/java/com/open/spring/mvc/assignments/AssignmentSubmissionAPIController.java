@@ -165,7 +165,7 @@ public class AssignmentSubmissionAPIController {
         
         // TODO: A better way to do this would be to have this be part of some sort of SubmitterService
         Submitter submitter;
-        if (submissionInfo.isGroup) {
+        if (Boolean.TRUE.equals(submissionInfo.isGroup)) {
             submitter = groupRepo.findById(submissionInfo.submitterId).orElse(null);
         } else {
             submitter = personRepo.findById(submissionInfo.submitterId).orElse(null);
@@ -419,13 +419,15 @@ public class AssignmentSubmissionAPIController {
         if (currentUser == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Authentication required"));
         }
+        // AI grading calls an external, metered API - deliberately kept to teacher/admin only,
+        // narrower than canManageSubmission's teacher-or-creator reach for grading/deletion.
+        if (!assignmentAuthorizationService.isTeacherOrAdmin(currentUser)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Admin or teacher access required"));
+        }
 
         AssignmentSubmission submission = submissionRepo.findById(submissionId).orElse(null);
         if (submission == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Submission not found"));
-        }
-        if (!canManageSubmission(currentUser, submission)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", MANAGE_DENIED_MESSAGE));
         }
 
         try {

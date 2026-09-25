@@ -6,7 +6,6 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.ServletListenerRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,6 +22,8 @@ import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.session.HttpSessionEventPublisher;
+
+import jakarta.servlet.DispatcherType;
 
 /*
  * MvcSecurityConfig.java
@@ -48,29 +49,17 @@ import org.springframework.security.web.session.HttpSessionEventPublisher;
 @Configuration
 public class MvcSecurityConfig {
 
-    private static final String JWT_COOKIE_NAME = "jwt_java_spring";
-    private static final String JWT_COOKIE_PATH = "/api";
-
-    @Value("${jwt.cookie.secure:true}")
-    private boolean cookieSecure;
-
-    @Value("${jwt.cookie.same-site:None}")
-    private String cookieSameSite;
-
-    @Value("${server.servlet.session.cookie.name:sess_java_spring}")
-    private String sessionCookieName;
-
-    @Value("${server.servlet.session.cookie.secure:true}")
-    private boolean sessionCookieSecure;
-
-    @Value("${server.servlet.session.cookie.same-site:None}")
-    private String sessionCookieSameSite;
-
-    @Value("${server.servlet.session.cookie.domain:}")
-    private String sessionCookieDomain;
+    // Cookie attributes live in CookieFactory -- see the comment there on why
+    // set and delete must be built from the same place.
 
     @Autowired
     private JwtTokenUtil jwtTokenUtil;
+
+    @Autowired
+    private CookieFactory cookieFactory;
+
+    @Autowired
+    private JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
     // Tracks every live MVC HttpSession by principal so a password reset can force-expire
     // whatever session(s) that uid currently holds -- previously a known gap (the JWT path
@@ -109,6 +98,15 @@ public class MvcSecurityConfig {
                     .sessionRegistry(sessionRegistry())
                     .maximumSessions(-1)))
             .authorizeHttpRequests(auth -> auth
+                // A container ERROR dispatch re-enters this chain with the URI rewritten
+                // to /error, which no longer matches the API chain's securityMatcher. Without
+                // this, every /api/** failure (500, 404, or a sendError from a filter) was
+                // re-authorized here as an anonymous request and answered with a 302 to the
+                // HTML login page -- the API request never saw its own error.
+                //
+                // This permits the DISPATCH TYPE, not a URL: a direct GET /error from outside
+                // arrives as a REQUEST dispatch and is still covered by the rules below.
+                .dispatcherTypeMatchers(DispatcherType.ERROR, DispatcherType.ASYNC).permitAll()
                 .requestMatchers("/mvc/person/search/**").authenticated()
                 .requestMatchers(HttpMethod.GET, "/mvc/person/create").permitAll()
                 .requestMatchers(HttpMethod.POST, "/mvc/person/create").permitAll()
@@ -147,6 +145,9 @@ public class MvcSecurityConfig {
                 .requestMatchers("/run/**").permitAll()  // Java runner endpoints - public access
                 .anyRequest().authenticated()
             )
+            .exceptionHandling(exceptions -> exceptions
+                .authenticationEntryPoint(
+                    new ApiAwareAuthenticationEntryPoint("/login", jwtAuthenticationEntryPoint)))
             .formLogin(form -> form
                 .loginPage("/login")
                 .successHandler((request, response, authentication) -> {
@@ -166,17 +167,9 @@ public class MvcSecurityConfig {
                         return;
                     }
 
-                    // Build JWT cookie with domain support for cross-subdomain requests
-                    ResponseCookie.ResponseCookieBuilder jwtCookieBuilder = ResponseCookie.from(JWT_COOKIE_NAME, token)
-                        .httpOnly(true)
-                        .secure(cookieSecure)
-                        .path(JWT_COOKIE_PATH)
-                        .maxAge(-1)
-                        .sameSite(cookieSameSite);
-
-                    applyJwtCookieScope(jwtCookieBuilder);
-                    
-                    ResponseCookie jwtCookie = jwtCookieBuilder.build();
+                    // Built by CookieFactory so this cookie and the one logout deletes
+                    // always carry the same name, domain and path.
+                    ResponseCookie jwtCookie = cookieFactory.jwtCookie(token);
 
                     response.addHeader(HttpHeaders.SET_COOKIE, jwtCookie.toString());
                     response.sendRedirect("/mvc/person/read");
@@ -185,49 +178,17 @@ public class MvcSecurityConfig {
                 .invalidateHttpSession(true)
                 .clearAuthentication(true)
                 .logoutSuccessHandler((request, response, authentication) -> {
-                    ResponseCookie.ResponseCookieBuilder sessionCookieBuilder = ResponseCookie.from(sessionCookieName, "")
-                        .httpOnly(true)
-                        .secure(sessionCookieSecure)
-                        .path("/")
-                        .maxAge(0)
-                        .sameSite(sessionCookieSameSite);
-                    if (!sessionCookieDomain.isBlank()) {
-                        sessionCookieBuilder.domain(sessionCookieDomain);
-                    }
-                    ResponseCookie sessionCookie = sessionCookieBuilder.build();
-
-                    ResponseCookie.ResponseCookieBuilder jwtCookieBuilder = ResponseCookie.from(JWT_COOKIE_NAME, "")
-                        .httpOnly(true)
-                        .secure(cookieSecure)
-                        .path(JWT_COOKIE_PATH)
-                        .maxAge(0)
-                        .sameSite(cookieSameSite);
-                    applyJwtCookieScope(jwtCookieBuilder);
-                    ResponseCookie jwtCookie = jwtCookieBuilder.build();
-                    ResponseCookie jwtHostOnlyCookie = ResponseCookie.from(JWT_COOKIE_NAME, "")
-                        .httpOnly(true)
-                        .secure(cookieSecure)
-                        .path(JWT_COOKIE_PATH)
-                        .maxAge(0)
-                        .sameSite(cookieSameSite)
-                        .build();
-
-                    if (!cookieSecure) {
-                        // Cleanup for legacy local dev cookies that were created with Domain=localhost.
-                        ResponseCookie jwtLegacyLocalhostCookie = ResponseCookie.from(JWT_COOKIE_NAME, "")
-                            .httpOnly(true)
-                            .secure(false)
-                            .path(JWT_COOKIE_PATH)
-                            .maxAge(0)
-                            .sameSite(cookieSameSite)
-                            .domain("localhost")
-                            .build();
-                        response.addHeader(HttpHeaders.SET_COOKIE, jwtLegacyLocalhostCookie.toString());
-                    }
-
+                    // Previously these were built inline without the domain that login sets,
+                    // so the browser kept the domain-scoped JWT and logout never took effect.
+                    ResponseCookie sessionCookie = cookieFactory.expiredSessionCookie();
+                    ResponseCookie jwtCookie = cookieFactory.expiredJwtCookie();
                     response.addHeader(HttpHeaders.SET_COOKIE, sessionCookie.toString());
                     response.addHeader(HttpHeaders.SET_COOKIE, jwtCookie.toString());
-                    response.addHeader(HttpHeaders.SET_COOKIE, jwtHostOnlyCookie.toString());
+                    // Also clears any pre-CookieFactory JWT cookie shape a browser might
+                    // still be holding (host-only, or Domain=localhost from local dev), so
+                    // logout actually logs out old sessions instead of leaving a zombie cookie.
+                    response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.expiredJwtHostOnlyCookie().toString());
+                    response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.expiredJwtLegacyLocalhostCookie().toString());
                     response.sendRedirect("/login?logout");
                 }));
 
@@ -251,11 +212,5 @@ public class MvcSecurityConfig {
         policy.put("POST /mvc/person/update/roles", "ROLE_ADMIN");
         policy.put("/mvc/person/delete/**", "ROLE_ADMIN");
         return Map.copyOf(policy);
-    }
-
-    private void applyJwtCookieScope(ResponseCookie.ResponseCookieBuilder cookieBuilder) {
-        if (cookieSecure) {
-            cookieBuilder.domain(".opencodingsociety.com");
-        }
     }
 }

@@ -27,6 +27,9 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.open.spring.mvc.assignments.AssignmentsApiController.AssignmentDto;
+import com.open.spring.mvc.groups.CourseGroupProperties;
+import com.open.spring.mvc.groups.Groups;
+import com.open.spring.mvc.groups.GroupsJpaRepository;
 import com.open.spring.mvc.person.Person;
 import com.open.spring.mvc.person.PersonJpaRepository;
 
@@ -40,10 +43,10 @@ class AssignmentsApiControllerCreatorTest {
      * page.url, which is leading- and trailing-slashed - so these tests exercise the
      * normalization that makes both callers land on one assignment.
      */
-    private static final String CONTENT_URL = "/csa/assignment-creator-permissions-pilot/";
+    private static final String CONTENT_URL = "/csa/sample-assignment/";
 
     /** The form that gets stored in, and looked up from, the content_url column. */
-    private static final String CANONICAL_CONTENT_URL = "csa/assignment-creator-permissions-pilot";
+    private static final String CANONICAL_CONTENT_URL = "csa/sample-assignment";
 
     @Mock
     private AssignmentJpaRepository assignmentRepo;
@@ -54,8 +57,12 @@ class AssignmentsApiControllerCreatorTest {
     @Mock
     private JdbcTemplate jdbcTemplate;
 
+    @Mock
+    private GroupsJpaRepository groupsRepository;
+
     private AssignmentsApiController controller;
     private AssignmentCreatorSyncService creatorSyncService;
+    private AssignmentCourseSyncService courseSyncService;
 
     private Person bot;
     private Person firstCreator;
@@ -67,6 +74,9 @@ class AssignmentsApiControllerCreatorTest {
 
         creatorSyncService = new AssignmentCreatorSyncService();
         ReflectionTestUtils.setField(creatorSyncService, "personRepo", personRepo);
+        CourseGroupProperties courseProperties = new CourseGroupProperties();
+        courseProperties.setClassGroups(List.of("CSA", "CSP", "CSH", "CSSE"));
+        courseSyncService = new AssignmentCourseSyncService(groupsRepository, courseProperties);
 
         controller = new AssignmentsApiController();
         ReflectionTestUtils.setField(controller, "assignmentRepo", assignmentRepo);
@@ -74,6 +84,7 @@ class AssignmentsApiControllerCreatorTest {
         ReflectionTestUtils.setField(controller, "jdbcTemplate", jdbcTemplate);
         ReflectionTestUtils.setField(controller, "assignmentAuthorizationService", new AssignmentAuthorizationService());
         ReflectionTestUtils.setField(controller, "assignmentCreatorSyncService", creatorSyncService);
+        ReflectionTestUtils.setField(controller, "assignmentCourseSyncService", courseSyncService);
 
         bot = syncBot(100L, "pages-bot");
         firstCreator = student(1L, "AdityaS-2010");
@@ -91,8 +102,16 @@ class AssignmentsApiControllerCreatorTest {
     }
 
     private ResponseEntity<?> autoCreate(UserDetails caller, List<String> creatorUids) {
+        return autoCreate(caller, creatorUids, null);
+    }
+
+    private ResponseEntity<?> autoCreate(
+            UserDetails caller,
+            List<String> creatorUids,
+            List<String> courseCodes) {
         return controller.autoCreateAssignment(
-            "Assignment Creator Permissions Pilot", CONTENT_URL, "", null, null, null, null, creatorUids, caller);
+            "Sample Assignment", CONTENT_URL, "", null, null,
+            null, null, creatorUids, courseCodes, caller);
     }
 
     @SuppressWarnings("unchecked")
@@ -114,8 +133,8 @@ class AssignmentsApiControllerCreatorTest {
     @Test
     void aPageDescriptionIsStoredWithoutTheLegacyContentUrlMarker() {
         controller.autoCreateAssignment(
-            "Assignment Creator Permissions Pilot", CONTENT_URL, "  Play the game  ",
-            null, null, null, null, null, caller("admin", "ROLE_ADMIN"));
+            "Sample Assignment", CONTENT_URL, "  Play the game  ",
+            null, null, null, null, null, null, caller("admin", "ROLE_ADMIN"));
 
         ArgumentCaptor<Assignment> saved = ArgumentCaptor.forClass(Assignment.class);
         verify(assignmentRepo).save(saved.capture());
@@ -129,6 +148,29 @@ class AssignmentsApiControllerCreatorTest {
 
         assertEquals(201, response.getStatusCode().value());
         assertEquals(List.of("AdityaS-2010"), ((AssignmentDto) response.getBody()).getCreatorUids());
+    }
+
+    @Test
+    void omittedSubmissionTypePreservesTheExistingAssignmentType() {
+        Assignment existing = assignment(10L, "sample", firstCreator);
+        existing.setContentUrl(CANONICAL_CONTENT_URL);
+        existing.setAssignmentType("github_issue");
+        when(assignmentRepo.findFirstByContentUrlOrderByIdAsc(CANONICAL_CONTENT_URL)).thenReturn(existing);
+
+        ResponseEntity<?> response = autoCreate(caller("admin", "ROLE_ADMIN"), null);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("github_issue", existing.getAssignmentType());
+        verify(assignmentRepo, never()).save(any(Assignment.class));
+    }
+
+    @Test
+    void newAssignmentWithoutSubmissionTypeDefaultsToFile() {
+        autoCreate(caller("admin", "ROLE_ADMIN"), null);
+
+        ArgumentCaptor<Assignment> saved = ArgumentCaptor.forClass(Assignment.class);
+        verify(assignmentRepo).save(saved.capture());
+        assertEquals("file", saved.getValue().getAssignmentType());
     }
 
     @Test
@@ -198,6 +240,50 @@ class AssignmentsApiControllerCreatorTest {
         ResponseEntity<?> response = autoCreate(caller("mort", "ROLE_TEACHER"), List.of("AdityaS-2010"));
 
         assertEquals(403, response.getStatusCode().value());
+    }
+
+    @Test
+    void syncUserCanAssignMultipleCourses() {
+        Groups csa = new Groups();
+        csa.setName("CSA");
+        Groups csp = new Groups();
+        csp.setName("CSP");
+        when(groupsRepository.findByName("CSA")).thenReturn(java.util.Optional.of(csa));
+        when(groupsRepository.findByName("CSP")).thenReturn(java.util.Optional.of(csp));
+
+        ResponseEntity<?> response = autoCreate(
+            caller("pages-bot", "ROLE_ASSIGNMENT_SYNC"),
+            List.of("AdityaS-2010"),
+            List.of("csa", "CSP"));
+
+        assertEquals(201, response.getStatusCode().value());
+        AssignmentDto body = (AssignmentDto) response.getBody();
+        assertEquals(CANONICAL_CONTENT_URL, body.getContentUrl());
+        assertEquals(List.of("CSA", "CSP"), body.getCourseCodes());
+    }
+
+    @Test
+    void unknownCourseRejectsTheEntireUpdate() {
+        ResponseEntity<?> response = autoCreate(
+            caller("pages-bot", "ROLE_ASSIGNMENT_SYNC"),
+            List.of("AdityaS-2010"),
+            List.of("UNKNOWN"));
+
+        assertEquals(400, response.getStatusCode().value());
+        assertEquals(List.of("UNKNOWN"), errorBody(response).get("unknownCourseCodes"));
+        verify(assignmentRepo, never()).save(any(Assignment.class));
+    }
+
+    @Test
+    void studentCannotSubmitCourseCodes() {
+        Person attacker = student(7L, "sneaky-student");
+        when(personRepo.findByUid("sneaky-student")).thenReturn(attacker);
+
+        ResponseEntity<?> response = autoCreate(
+            caller("sneaky-student", "ROLE_STUDENT"), null, List.of("CSA"));
+
+        assertEquals(403, response.getStatusCode().value());
+        verify(assignmentRepo, never()).save(any(Assignment.class));
     }
 
     @Test

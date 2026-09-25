@@ -36,6 +36,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.open.spring.mvc.S3uploads.FileHandler;
+import com.open.spring.mvc.assignments.AssignmentCourseSyncService.UnknownCourseException;
 import com.open.spring.mvc.assignments.AssignmentCreatorSyncService.UnknownCreatorException;
 import com.open.spring.mvc.groups.GroupsJpaRepository;
 import com.open.spring.mvc.person.Person;
@@ -81,6 +82,9 @@ public class AssignmentsApiController {
     @Autowired
     private AssignmentCreatorSyncService assignmentCreatorSyncService;
 
+    @Autowired
+    private AssignmentCourseSyncService assignmentCourseSyncService;
+
     @Getter
     @Setter
     public static class AssignmentDto {
@@ -98,12 +102,18 @@ public class AssignmentsApiController {
         public String resourceFilename;
         public String resourceStoragePath;
         public String resourceUploadedBy;
+        public String contentUrl;
+        public List<String> courseCodes;
         /** Owner uids; null on endpoints that do not load the creator relationship. */
         public List<String> creatorUids;
 
-        public AssignmentDto(Assignment assignment, List<String> creatorUids) {
+        public AssignmentDto(
+                Assignment assignment,
+                List<String> creatorUids,
+                List<String> courseCodes) {
             this(assignment);
             this.creatorUids = creatorUids;
+            this.courseCodes = courseCodes;
         }
 
         public AssignmentDto(Assignment assignment) {
@@ -121,6 +131,7 @@ public class AssignmentsApiController {
             this.resourceFilename = assignment.getResourceFilename();
             this.resourceStoragePath = assignment.getResourceStoragePath();
             this.resourceUploadedBy = extractResourceUploader(assignment);
+            this.contentUrl = assignment.getContentUrl();
         }
 
         private static String extractResourceUploader(Assignment assignment) {
@@ -279,7 +290,7 @@ public class AssignmentsApiController {
      * Any authenticated user (student, person, teacher, admin) can create assignments.
      * If an assignment with the same contentUrl already exists, it returns that instead of creating a duplicate.
      *
-     * Ownership synchronization is separate from creation: creatorUids is only honored for
+     * Metadata synchronization is separate from creation: creatorUids and courseCodes are only honored for
      * the trusted Pages bot (ROLE_ASSIGNMENT_SYNC). Browser calls omit the parameter entirely
      * and keep their existing behavior.
      *
@@ -287,6 +298,7 @@ public class AssignmentsApiController {
      * @param contentUrl The URL to the lesson page (required)
      * @param description The description of the assignment (optional)
      * @param creatorUids Repeated form fields naming the assignment owners by Person.uid (optional, sync bot only)
+     * @param courseCodes Repeated canonical course group names (optional, sync bot only)
      * @param userDetails The authenticated user making the request
      * @return The created or existing assignment with auto-generated ID
      */
@@ -301,10 +313,11 @@ public class AssignmentsApiController {
             @RequestParam(required = false) String assignmentType,
             @RequestParam(required = false) String pageContent,
             @RequestParam(required = false) List<String> creatorUids,
+            @RequestParam(required = false) List<String> courseCodes,
             @AuthenticationPrincipal UserDetails userDetails
     ) {
         // Debug log input
-        logger.debug("autoCreateAssignment called with name='{}' contentUrl='{}' description='{}' points={} dueDate='{}' assignmentType='{}' userDetails={}", name, contentUrl, description, points, dueDate, assignmentType, userDetails==null?"<anon>":userDetails.getUsername());
+        logger.debug("autoCreateAssignment called with name='{}' contentUrl='{}' description='{}' points={} dueDate='{}' assignmentType='{}' creatorUids={} courseCodes={} userDetails={}", name, contentUrl, description, points, dueDate, assignmentType, creatorUids, courseCodes, userDetails==null?"<anon>":userDetails.getUsername());
 
         // Check authentication - any authenticated user can create assignments from frontmatter
         if (userDetails == null) {
@@ -319,9 +332,9 @@ public class AssignmentsApiController {
             return ResponseEntity.badRequest().body(Map.of("error", "Content URL is required"));
         }
 
-        if (assignmentType == null){
-            assignmentType = "file";
-        }
+        // An omitted type must not reset an existing assignment's configured submission type.
+        String requestedAssignmentType = assignmentType == null || assignmentType.isBlank()
+            ? null : assignmentType.trim();
 
         // The browser sends Jekyll's page.url ("/csa/lesson") and the Pages sync script
         // sends the same URL derived from the source file; canonicalizing here is what
@@ -334,15 +347,19 @@ public class AssignmentsApiController {
         // Ownership is only synchronized when the caller actually sent creatorUids.
         // Absent parameter == legacy behavior, which is what the browser flow relies on.
         boolean synchronizeCreators = creatorUids != null;
+        boolean synchronizeCourses = courseCodes != null;
         List<Person> resolvedCreators = List.of();
-        if (synchronizeCreators) {
+        List<com.open.spring.mvc.groups.Groups> resolvedCourseGroups = List.of();
+        if (synchronizeCreators || synchronizeCourses) {
             Person requester = personRepo.findByUid(userDetails.getUsername());
-            if (!assignmentAuthorizationService.canSynchronizeCreators(requester)) {
-                logger.warn("Rejected creator synchronization from non-sync user '{}' for contentUrl {}",
+            if (!assignmentAuthorizationService.canSynchronizeAssignmentMetadata(requester)) {
+                logger.warn("Rejected assignment metadata synchronization from non-sync user '{}' for contentUrl {}",
                     userDetails.getUsername(), contentUrl);
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(Map.of("error", "Assignment sync role required to set assignment creators"));
+                    .body(Map.of("error", "Assignment sync role required to set assignment metadata"));
             }
+        }
+        if (synchronizeCreators) {
             try {
                 // Resolve every uid up front so a bad list never creates an assignment
                 // and never leaves a partially written creator relationship behind.
@@ -353,6 +370,19 @@ public class AssignmentsApiController {
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "Unknown creator uid(s)",
                     "unknownCreatorUids", e.getUnknownUids()));
+            }
+        }
+        if (synchronizeCourses) {
+            try {
+                resolvedCourseGroups = assignmentCourseSyncService.resolveCourseGroups(
+                    assignmentCourseSyncService.normalizeCourseCodes(courseCodes));
+            } catch (UnknownCourseException e) {
+                logger.warn("Rejected course synchronization for contentUrl {}: {}", contentUrl, e.getMessage());
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Unknown course code(s)",
+                    "unknownCourseCodes", e.getUnknownCourseCodes()));
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
             }
         }
 
@@ -370,23 +400,27 @@ public class AssignmentsApiController {
 
         if (existing != null) {
             // Return existing assignment (already has auto-generated ID) — avoids duplicate
-            // assignments for the same page. Ownership still has to be resynchronized here,
-            // otherwise frontmatter edits would only ever reach assignments on their very
-            // first deploy.
+            // assignments for the same page. Ownership/course metadata still has to be
+            // resynchronized here, otherwise frontmatter edits would only ever reach
+            // assignments on their very first deploy.
             Assignment assignment = existing;
-            if (assignmentType != null && !assignmentType.isBlank()
-                    && !assignmentType.equalsIgnoreCase(assignment.getAssignmentType())) {
-                assignment.setAssignmentType(assignmentType.trim());
+            if (requestedAssignmentType != null
+                    && !requestedAssignmentType.equalsIgnoreCase(assignment.getAssignmentType())) {
+                assignment.setAssignmentType(requestedAssignmentType);
                 assignment = saveAssignmentWithRetry(assignment);
             }
-            if (synchronizeCreators
-                    && assignmentCreatorSyncService.applyCreators(assignment, resolvedCreators)) {
+            boolean metadataChanged = synchronizeCreators
+                && assignmentCreatorSyncService.applyCreators(assignment, resolvedCreators);
+            metadataChanged = (synchronizeCourses
+                && assignmentCourseSyncService.applyCourseGroups(assignment, resolvedCourseGroups))
+                || metadataChanged;
+            if (metadataChanged) {
                 assignment = saveAssignmentWithRetry(assignment);
-                logger.info("Synchronized creators for existing assignment ID {} (contentUrl: {})",
+                logger.info("Synchronized metadata for existing assignment ID {} (contentUrl: {})",
                     assignment.getId(), canonicalUrl);
             }
             logger.info("Assignment already exists for contentUrl: " + canonicalUrl + ", ID: " + assignment.getId());
-            return ResponseEntity.ok(toDto(assignment, synchronizeCreators));
+            return ResponseEntity.ok(toDto(assignment, synchronizeCreators || synchronizeCourses));
         }
 
         try {
@@ -405,7 +439,7 @@ public class AssignmentsApiController {
                 finalDescription,
                 resolvedPoints,
                 resolvedDueDate,
-                assignmentType
+                requestedAssignmentType == null ? "file" : requestedAssignmentType
             );
             applyGeneratedRubric(newAssignment, name, description, pageContent);
 
@@ -413,16 +447,33 @@ public class AssignmentsApiController {
             if (synchronizeCreators) {
                 assignmentCreatorSyncService.applyCreators(newAssignment, resolvedCreators);
             }
+            if (synchronizeCourses) {
+                assignmentCourseSyncService.applyCourseGroups(newAssignment, resolvedCourseGroups);
+            }
             
             normalizeAssignmentSequenceForSqlite();
             Assignment savedAssignment = saveAssignmentWithRetry(newAssignment);
             logger.info("Auto-created assignment with ID: " + savedAssignment.getId() + " for contentUrl: " + canonicalUrl);
-            return new ResponseEntity<>(toDto(savedAssignment, synchronizeCreators), HttpStatus.CREATED);
+            return new ResponseEntity<>(
+                toDto(savedAssignment, synchronizeCreators || synchronizeCourses),
+                HttpStatus.CREATED);
         } catch (Exception e) {
             logger.error("Error auto-creating assignment for contentUrl: " + contentUrl, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", "Failed to create assignment: " + e.getMessage()));
         }
+    }
+
+    public ResponseEntity<?> autoCreateAssignment(
+            String name,
+            String contentUrl,
+            String description,
+            Double points,
+            String dueDate,
+            List<String> creatorUids,
+            UserDetails userDetails) {
+        return autoCreateAssignment(
+            name, contentUrl, description, points, dueDate, null, null, creatorUids, null, userDetails);
     }
 
     /**
@@ -463,7 +514,10 @@ public class AssignmentsApiController {
      */
     private AssignmentDto toDto(Assignment assignment, boolean includeCreators) {
         return includeCreators
-            ? new AssignmentDto(assignment, assignmentCreatorSyncService.creatorUidsOf(assignment))
+            ? new AssignmentDto(
+                assignment,
+                assignmentCreatorSyncService.creatorUidsOf(assignment),
+                assignmentCourseSyncService.courseCodesOf(assignment))
             : new AssignmentDto(assignment);
     }
 

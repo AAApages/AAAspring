@@ -1,6 +1,7 @@
 package com.open.spring.mvc.groups;
 
 import java.util.List;
+import java.util.Collection;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -30,6 +31,13 @@ public interface GroupsJpaRepository extends JpaRepository<Groups, Long> {
 
     @Query("SELECT DISTINCT g FROM Groups g LEFT JOIN FETCH g.groupMembers gm WHERE EXISTS (SELECT 1 FROM g.groupMembers p WHERE p.id = :personId) ORDER BY g.id")
     List<Groups> findGroupsByPersonIdWithMembers(@Param("personId") Long personId);
+
+    /** Bulk course membership rows for submission-list DTO enrichment. */
+    @Query("SELECT p.id, g.name FROM Groups g JOIN g.groupMembers p "
+        + "WHERE p.id IN :personIds AND UPPER(g.name) IN :courseNames ORDER BY p.id, g.name")
+    List<Object[]> findCourseMembershipsByPersonIds(
+        @Param("personIds") Collection<Long> personIds,
+        @Param("courseNames") Collection<String> courseNames);
     
     // Find groups with a specific number of members
     @Query("SELECT g FROM Groups g WHERE SIZE(g.groupMembers) = :memberCount")

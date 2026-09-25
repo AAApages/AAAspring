@@ -73,21 +73,25 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 				}
 			}
 		} catch (IllegalArgumentException e) {
-			logger.error("JWT Token get error", e);
-			response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "JWT Token get error");
-			return;
+			logger.warn("JWT token could not be read; continuing unauthenticated: " + e.getMessage());
 		} catch (ExpiredJwtException e) {
 			logger.warn("JWT token expired for request: " + buildRequestLogMessage(request));
-			response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "JWT Token has expired");
-			return;
 		} catch (Exception e) {
-			logger.error("JWT error occurred", e);
-			response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "JWT error occurred");
-			return;
+			logger.warn("JWT token was rejected; continuing unauthenticated: " + e.getMessage());
 		}
-	
+
+		// A bad token must not end the request here.
+		//
+		// response.sendError() triggers a container ERROR dispatch, which re-enters the
+		// filter chain as /error and is answered by the MVC chain with a 302 to the HTML
+		// login page. It also broke permitAll endpoints: a stale cookie left in the browser
+		// stopped signup from working at all.
+		//
+		// Instead leave the context unauthenticated and continue. AuthorizationFilter then
+		// allows permitAll endpoints through and denies protected ones, and
+		// JwtAuthenticationEntryPoint writes the JSON 401 directly (no error dispatch).
 		chain.doFilter(request, response);
-	
+
 	}
 
 	/**

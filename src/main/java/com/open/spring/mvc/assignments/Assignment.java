@@ -9,6 +9,7 @@ import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.open.spring.mvc.person.Person;
+import com.open.spring.mvc.groups.Groups;
 import com.open.spring.mvc.synergy.SynergyGrade;
 
 import jakarta.persistence.CascadeType;
@@ -96,6 +97,7 @@ Indicators:
      * AssignmentContentUrlMigration) so /api/assignments/auto-create can look an
      * existing assignment up directly instead of scanning every row's description.
      */
+    @Column(name = "content_url", unique = true)
     private String contentUrl;
 
     @Column(columnDefinition = "TEXT")
@@ -138,6 +140,17 @@ Indicators:
     @JsonIgnore
     @EqualsAndHashCode.Exclude
     private List<Person> creators = new ArrayList<>();
+
+    /** Canonical course groups declared by the page's existing courses frontmatter. */
+    @ManyToMany
+    @JoinTable(
+        name = "assignment_course_groups",
+        joinColumns = @JoinColumn(name = "assignment_id"),
+        inverseJoinColumns = @JoinColumn(name = "group_id")
+    )
+    @JsonIgnore
+    @EqualsAndHashCode.Exclude
+    private List<Groups> courseGroups = new ArrayList<>();
 
     @OneToMany(mappedBy="assignment", cascade=CascadeType.ALL, orphanRemoval=true)
     @JsonIgnore
@@ -203,6 +216,10 @@ Indicators:
         this.resourceStoragePath = null;
         // This line is not needed as converter will reset to null after it takes in an empty queue
         // this.assignmentQueue = new AssignmentQueue();
+    }
+
+    public Assignment(String name, String type, String description, Double points, String dueDate) {
+        this(name, type, description, points, dueDate, "File");
     }
 
     public void setUrlResource(String url) {

@@ -57,6 +57,11 @@ public class AssignmentAuthorizationService {
      * admins are intentionally excluded: Pages frontmatter stays the source of ownership.
      */
     public boolean canSynchronizeCreators(Person user) {
+        return canSynchronizeAssignmentMetadata(user);
+    }
+
+    /** Course and creator frontmatter share the same trusted synchronization boundary. */
+    public boolean canSynchronizeAssignmentMetadata(Person user) {
         return user != null && user.hasRoleWithName(ROLE_ASSIGNMENT_SYNC);
     }
 

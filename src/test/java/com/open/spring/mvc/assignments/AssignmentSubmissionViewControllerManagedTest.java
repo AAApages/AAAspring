@@ -25,6 +25,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.open.spring.mvc.assignments.AssignmentSubmissionViewController.SubmissionListDTO;
+import com.open.spring.mvc.groups.CourseGroupProperties;
+import com.open.spring.mvc.groups.Groups;
+import com.open.spring.mvc.groups.GroupsJpaRepository;
 import com.open.spring.mvc.person.Person;
 import com.open.spring.mvc.person.PersonJpaRepository;
 
@@ -42,6 +45,9 @@ class AssignmentSubmissionViewControllerManagedTest {
     @Mock
     private PersonJpaRepository personRepo;
 
+    @Mock
+    private GroupsJpaRepository groupsRepository;
+
     private AssignmentSubmissionViewController controller;
 
     private Person creator;
@@ -58,6 +64,12 @@ class AssignmentSubmissionViewControllerManagedTest {
         ReflectionTestUtils.setField(controller, "assignmentRepo", assignmentRepo);
         ReflectionTestUtils.setField(controller, "personRepo", personRepo);
         ReflectionTestUtils.setField(controller, "assignmentAuthorizationService", new AssignmentAuthorizationService());
+        CourseGroupProperties courseProperties = new CourseGroupProperties();
+        courseProperties.setClassGroups(List.of("CSA", "CSP", "CSH", "CSSE"));
+        ReflectionTestUtils.setField(controller, "courseGroupProperties", courseProperties);
+        ReflectionTestUtils.setField(controller, "groupsRepository", groupsRepository);
+        ReflectionTestUtils.setField(controller, "assignmentCourseSyncService",
+            new AssignmentCourseSyncService(groupsRepository, courseProperties));
 
         creator = student(1L, "AdityaS-2010");
         ownedAssignment = assignment(10L, "pilot", creator);
@@ -95,6 +107,58 @@ class AssignmentSubmissionViewControllerManagedTest {
         assertEquals(100L, body.get(0).getId());
         assertEquals(10L, body.get(0).getAssignmentId());
         verify(submissionRepo, never()).findAll();
+    }
+
+    @Test
+    void managedSubmissionIncludesAssignmentAndStudentCourseMetadata() {
+        ownedSubmission.setSubmitter(creator);
+        ownedAssignment.setContentUrl("csa/pilot");
+        Groups csa = new Groups();
+        csa.setName("CSA");
+        ownedAssignment.getCourseGroups().add(csa);
+        authenticateAs(creator, "ROLE_STUDENT");
+        when(assignmentRepo.findByCreatorId(1L)).thenReturn(List.of(ownedAssignment));
+        when(submissionRepo.findByAssignmentIdIn(List.of(10L))).thenReturn(List.of(ownedSubmission));
+        when(groupsRepository.findCourseMembershipsByPersonIds(any(), any()))
+            .thenReturn(java.util.Collections.singletonList(new Object[] {1L, "CSA"}));
+
+        SubmissionListDTO dto = dtos(controller.getManagedSubmissions()).get(0);
+
+        assertEquals("AdityaS-2010", dto.getSubmitterUid());
+        assertEquals(List.of("CSA"), dto.getSubmitterCourseCodes());
+        assertEquals("csa/pilot", dto.getAssignmentContentUrl());
+        assertEquals(List.of("CSA"), dto.getAssignmentCourseCodes());
+    }
+
+    @Test
+    void studentWithTwoMembershipsIncludesBothCourses() {
+        ownedSubmission.setSubmitter(creator);
+        authenticateAs(creator, "ROLE_STUDENT");
+        when(assignmentRepo.findByCreatorId(1L)).thenReturn(List.of(ownedAssignment));
+        when(submissionRepo.findByAssignmentIdIn(List.of(10L))).thenReturn(List.of(ownedSubmission));
+        when(groupsRepository.findCourseMembershipsByPersonIds(any(), any()))
+            .thenReturn(List.of(new Object[] {1L, "CSP"}, new Object[] {1L, "CSA"}));
+
+        SubmissionListDTO dto = dtos(controller.getManagedSubmissions()).get(0);
+
+        assertEquals(List.of("CSA", "CSP"), dto.getSubmitterCourseCodes());
+        verify(groupsRepository).findCourseMembershipsByPersonIds(any(), any());
+    }
+
+    @Test
+    void canonicalGroupSubmissionUsesItsCourseWithoutAStudentMembershipQuery() {
+        Groups classGroup = new Groups();
+        classGroup.setName("CSA");
+        ownedSubmission.setSubmitter(classGroup);
+        authenticateAs(creator, "ROLE_STUDENT");
+        when(assignmentRepo.findByCreatorId(1L)).thenReturn(List.of(ownedAssignment));
+        when(submissionRepo.findByAssignmentIdIn(List.of(10L))).thenReturn(List.of(ownedSubmission));
+
+        SubmissionListDTO dto = dtos(controller.getManagedSubmissions()).get(0);
+
+        assertEquals(List.of("CSA"), dto.getSubmitterCourseCodes());
+        assertTrue(dto.getIsGroup());
+        verify(groupsRepository, never()).findCourseMembershipsByPersonIds(any(), any());
     }
 
     @Test
