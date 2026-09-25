@@ -290,7 +290,7 @@ public class AssignmentAiGradingService {
 
     private String fetchGistFiles(String gistId) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.github.com/gists/" + gistId))
-                .timeout(Duration.ofSeconds(15))
+                .timeout(Duration.ofSeconds(45))
                 .header("Accept", "application/vnd.github+json")
                 .header("Authorization", "Bearer " + gistToken)
                 .header("X-GitHub-Api-Version", "2022-11-28")
@@ -419,7 +419,7 @@ public class AssignmentAiGradingService {
 
     private HttpRequest.Builder githubIssueRequest(String apiUrl) {
         return HttpRequest.newBuilder(URI.create(apiUrl))
-                .timeout(Duration.ofSeconds(15))
+                .timeout(Duration.ofSeconds(45))
                 .header("Accept", "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", "2022-11-28")
                 .header("User-Agent", "OpenCodingSociety-assignment-grader")
