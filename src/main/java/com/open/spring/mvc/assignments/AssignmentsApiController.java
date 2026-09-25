@@ -77,6 +77,9 @@ public class AssignmentsApiController {
     private AssignmentAuthorizationService assignmentAuthorizationService;
 
     @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @Autowired
     private AssignmentCreatorSyncService assignmentCreatorSyncService;
 
     @Autowired
@@ -396,23 +399,23 @@ public class AssignmentsApiController {
         Assignment existing = assignmentRepo.findFirstByContentUrlOrderByIdAsc(canonicalUrl);
 
         if (existing != null) {
-            Assignment existingAssignment = existing;
+            // Return existing assignment (already has auto-generated ID) — avoids duplicate
+            // assignments for the same page. Ownership/course metadata still has to be
+            // resynchronized here, otherwise frontmatter edits would only ever reach
+            // assignments on their very first deploy.
+            Assignment assignment = existing;
             if (requestedAssignmentType != null
-                    && !requestedAssignmentType.equalsIgnoreCase(existingAssignment.getAssignmentType())) {
-                existingAssignment.setAssignmentType(requestedAssignmentType);
-                existingAssignment = assignmentRepo.save(existingAssignment);
+                    && !requestedAssignmentType.equalsIgnoreCase(assignment.getAssignmentType())) {
+                assignment.setAssignmentType(requestedAssignmentType);
+                assignment = saveAssignmentWithRetry(assignment);
             }
-            // This avoids duplicate assignments for the same page.
-            // Ownership still has to be resynchronized here, otherwise frontmatter edits
-            // would only ever reach assignments on their very first deploy.
-            Assignment assignment = existingAssignment;
             boolean metadataChanged = synchronizeCreators
                 && assignmentCreatorSyncService.applyCreators(assignment, resolvedCreators);
             metadataChanged = (synchronizeCourses
                 && assignmentCourseSyncService.applyCourseGroups(assignment, resolvedCourseGroups))
                 || metadataChanged;
             if (metadataChanged) {
-                assignment = assignmentRepo.save(assignment);
+                assignment = saveAssignmentWithRetry(assignment);
                 logger.info("Synchronized metadata for existing assignment ID {} (contentUrl: {})",
                     assignment.getId(), canonicalUrl);
             }
@@ -449,7 +452,7 @@ public class AssignmentsApiController {
             }
             
             normalizeAssignmentSequenceForSqlite();
-            Assignment savedAssignment = assignmentRepo.save(newAssignment);
+            Assignment savedAssignment = saveAssignmentWithRetry(newAssignment);
             logger.info("Auto-created assignment with ID: " + savedAssignment.getId() + " for contentUrl: " + canonicalUrl);
             return new ResponseEntity<>(
                 toDto(savedAssignment, synchronizeCreators || synchronizeCourses),
@@ -542,6 +545,56 @@ public class AssignmentsApiController {
         } catch (Exception e) {
             logger.warn("Rubric generation failed for assignment '{}': {}", name, e.getMessage());
         }
+    }
+
+    /**
+     * Saves an assignment in its own independent transaction, retrying a few times on a
+     * transient SQLite write-lock conflict.
+     *
+     * SQLite's WAL mode serializes writers: a concurrent auto-create request (or one of the
+     * app's own @Scheduled jobs, e.g. MiningService) can transiently fail an insert with
+     * SQLITE_BUSY_SNAPSHOT ("database is locked"). Two problems compound here: Hibernate
+     * normally defers the actual INSERT until this class's @Transactional method returns and
+     * the interceptor commits, so by the time a lock conflict surfaces, the caller's own
+     * try/catch can no longer catch anything - it reaches the servlet as an unhandled
+     * exception (an HTML error page instead of the JSON this endpoint always returns).
+     * And once a flush fails inside a Spring-managed transaction, Spring marks that whole
+     * transaction rollback-only, so simply retrying the same save again in the same
+     * transaction only trades SQLITE_BUSY for UnexpectedRollbackException. Running each
+     * attempt in its own REQUIRES_NEW transaction - independent of whatever transaction the
+     * caller is in - is what actually lets a retry succeed.
+     */
+    private Assignment saveAssignmentWithRetry(Assignment assignment) {
+        // Plain unit tests build this controller with `new` and mock only the repositories
+        // they care about (see AssignmentsApiControllerCreatorTest) - there is no real
+        // transaction manager in that context, and a mocked repo never actually contends for
+        // a database lock, so a single plain save is exactly equivalent for them.
+        if (transactionManager == null) {
+            return assignmentRepo.save(assignment);
+        }
+
+        org.springframework.transaction.support.TransactionTemplate retryTemplate =
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        retryTemplate.setPropagationBehavior(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        final int maxAttempts = 3;
+        DataAccessException lastFailure = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return retryTemplate.execute(status -> assignmentRepo.save(assignment));
+            } catch (DataAccessException e) {
+                lastFailure = e;
+                logger.warn("Transient error saving assignment (attempt {}/{}): {}", attempt, maxAttempts, e.getMessage());
+                try {
+                    Thread.sleep(50L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        throw lastFailure;
     }
 
     /**

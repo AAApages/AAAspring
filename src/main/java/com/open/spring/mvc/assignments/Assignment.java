@@ -87,7 +87,18 @@ Indicators:
     @NotEmpty
     private String type;
 
+    private String assignmentType;
+
     private String description;
+
+    /**
+     * The lesson page this assignment was auto-created for, canonicalized via
+     * {@link AssignmentContentUrls#canonicalize(String)}. Indexed (see
+     * AssignmentContentUrlMigration) so /api/assignments/auto-create can look an
+     * existing assignment up directly instead of scanning every row's description.
+     */
+    @Column(name = "content_url", unique = true)
+    private String contentUrl;
 
     @Column(columnDefinition = "TEXT")
     private String aiRubric;
@@ -159,13 +170,6 @@ Indicators:
     @Convert(converter = AssignmentQueueConverter.class)
     private AssignmentQueue assignmentQueue;
 
-    // NEW: Assignment type field (all_assignments or sprints)
-    @Column(length = 50)
-    private String assignmentType = "all_assignments";
-
-    @Column(name = "content_url", unique = true)
-    private String contentUrl;
-
     private static DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public void resetQueue() {
@@ -210,7 +214,7 @@ Indicators:
         this.resourceUrl = null;
         this.resourceFilename = null;
         this.resourceStoragePath = null;
-        // This line is not needed as converter will reset to null after it takes in an empty queue 
+        // This line is not needed as converter will reset to null after it takes in an empty queue
         // this.assignmentQueue = new AssignmentQueue();
     }
 
