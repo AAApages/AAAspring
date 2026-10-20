@@ -44,8 +44,8 @@ public class AssignmentContentUrlMigration {
     public ApplicationRunner migrateAssignmentContentUrls() {
         return args -> {
             addContentUrlColumn();
-            createContentUrlIndex();
             backfillContentUrlsFromDescription();
+            createContentUrlUniqueIndex();
         };
     }
 
@@ -58,16 +58,74 @@ public class AssignmentContentUrlMigration {
         }
     }
 
-    private void createContentUrlIndex() {
-        // Kept separate from the ALTER so that a databases rejecting one statement still
-        // gets the other. MySQL has no IF NOT EXISTS for CREATE INDEX, so it lands here
-        // as a swallowed duplicate-key error rather than a startup failure.
+    /**
+     * Makes content_url uniqueness a real database constraint instead of only the
+     * application-level check-then-insert in AssignmentsApiController.autoCreateAssignment().
+     * That check queries for an existing row, and only inserts a new one if none is found -
+     * two concurrent auto-create requests for the same page (e.g. a class opening the same
+     * lesson at once, each firing the request on page load) can both pass that check before
+     * either commits, producing two real duplicate rows. A unique index turns the loser's
+     * insert into a constraint violation instead, which autoCreateAssignment() catches and
+     * turns into the same "assignment already exists" response the winner gets.
+     */
+    private void createContentUrlUniqueIndex() {
+        if (duplicateContentUrlsExist()) {
+            // Refuse to leave a half-applied unique index: SQLite and MySQL both reject
+            // CREATE UNIQUE INDEX outright when existing rows violate it, so this would
+            // otherwise fail silently (same swallowed-exception path as every other
+            // statement here) and never actually protect anything. Surfaced loudly instead
+            // so duplicates get cleaned up manually - deleting assignment rows here would
+            // orphan their submissions/grades, which this migration must not do on its own.
+            logger.warn(
+                "Duplicate content_url values exist in 'assignment' - skipping the unique "
+                    + "index. Auto-create duplication is NOT fully prevented until these are "
+                    + "resolved manually. Query: SELECT content_url, COUNT(*) FROM assignment "
+                    + "WHERE content_url IS NOT NULL GROUP BY content_url HAVING COUNT(*) > 1");
+            return;
+        }
+
+        // A database that already ran the old migration has a plain (non-unique) index
+        // under this exact name - "IF NOT EXISTS" would see the name taken and skip
+        // creation, silently leaving it non-unique forever. Drop it first so the name is
+        // free; harmless no-op on a fresh database that never had it. Two dialect-specific
+        // forms because SQLite and MySQL spell "drop index" differently; each is tried
+        // independently so one dialect rejecting its form doesn't block the other's.
+        try {
+            jdbcTemplate.execute("DROP INDEX IF EXISTS \"idx_assignment_content_url\"");
+        } catch (DataAccessException ignored) {
+            // Not SQLite, or the index never existed under this form.
+        }
+        try {
+            jdbcTemplate.execute("DROP INDEX \"idx_assignment_content_url\" ON \"assignment\"");
+        } catch (DataAccessException ignored) {
+            // Not MySQL, or the index never existed under this form.
+        }
+
+        // Kept separate from the ALTER so that a database rejecting one statement still
+        // gets the other. MySQL has no IF NOT EXISTS for CREATE INDEX, so re-running this
+        // on an already-migrated database lands here as a swallowed duplicate-key error
+        // rather than a startup failure.
         try {
             jdbcTemplate.execute(
-                "CREATE INDEX IF NOT EXISTS \"idx_assignment_content_url\" "
+                "CREATE UNIQUE INDEX IF NOT EXISTS \"idx_assignment_content_url\" "
                     + "ON \"assignment\" (\"content_url\")");
         } catch (DataAccessException ignored) {
             // Index already exists, or the dialect refuses IF NOT EXISTS.
+        }
+    }
+
+    private boolean duplicateContentUrlsExist() {
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM (SELECT \"content_url\" FROM \"assignment\" "
+                    + "WHERE \"content_url\" IS NOT NULL GROUP BY \"content_url\" "
+                    + "HAVING COUNT(*) > 1) \"dup\"",
+                Integer.class);
+            return count != null && count > 0;
+        } catch (DataAccessException e) {
+            // If we can't even check, don't risk creating a unique index blind.
+            logger.warn("Could not check for duplicate content_url values: {}", e.getMessage());
+            return true;
         }
     }
 

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -368,6 +369,37 @@ class AssignmentsApiControllerCreatorTest {
     void managedAssignmentsRequiresAuthentication() {
         ResponseEntity<?> response = controller.getManagedAssignments(null);
         assertEquals(401, response.getStatusCode().value());
+    }
+
+    /**
+     * Simulates two concurrent auto-create requests for the same contentUrl: both pass the
+     * initial findFirstByContentUrlOrderByIdAsc lookup (mocked to return null, as it would
+     * for a real unindexed-vs-not-yet-committed race), then this request's insert hits the
+     * unique content_url index (AssignmentContentUrlMigration) that the other request's
+     * insert already satisfied. The controller must recover by returning that assignment,
+     * not a 500 - and must not insert a second row.
+     */
+    @Test
+    void losingTheCreateRaceReturnsTheWinnersAssignmentInsteadOfFailing() {
+        Assignment winner = assignment(10L, "Sample Assignment", firstCreator);
+        winner.setContentUrl(CANONICAL_CONTENT_URL);
+        winner.setAssignmentType("file");
+
+        when(assignmentRepo.findFirstByContentUrlOrderByIdAsc(CANONICAL_CONTENT_URL))
+            .thenReturn(null)
+            .thenReturn(winner);
+        when(assignmentRepo.save(any(Assignment.class)))
+            .thenThrow(new org.springframework.dao.DataIntegrityViolationException(
+                "UNIQUE constraint failed: assignment.content_url"));
+
+        ResponseEntity<?> response = autoCreate(caller("admin", "ROLE_ADMIN"), null);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals(10L, ((AssignmentDto) response.getBody()).getId());
+        // Exactly the one failed insert attempt - DataIntegrityViolationException must not
+        // be retried (it's permanent, not transient), and no metadata sync re-save happens
+        // here since this request sent no assignmentType/creatorUids/courseCodes.
+        verify(assignmentRepo, times(1)).save(any(Assignment.class));
     }
 
     @SuppressWarnings("unchecked")

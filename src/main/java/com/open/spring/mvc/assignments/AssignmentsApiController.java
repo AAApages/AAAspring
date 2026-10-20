@@ -399,28 +399,8 @@ public class AssignmentsApiController {
         Assignment existing = assignmentRepo.findFirstByContentUrlOrderByIdAsc(canonicalUrl);
 
         if (existing != null) {
-            // Return existing assignment (already has auto-generated ID) — avoids duplicate
-            // assignments for the same page. Ownership/course metadata still has to be
-            // resynchronized here, otherwise frontmatter edits would only ever reach
-            // assignments on their very first deploy.
-            Assignment assignment = existing;
-            if (requestedAssignmentType != null
-                    && !requestedAssignmentType.equalsIgnoreCase(assignment.getAssignmentType())) {
-                assignment.setAssignmentType(requestedAssignmentType);
-                assignment = saveAssignmentWithRetry(assignment);
-            }
-            boolean metadataChanged = synchronizeCreators
-                && assignmentCreatorSyncService.applyCreators(assignment, resolvedCreators);
-            metadataChanged = (synchronizeCourses
-                && assignmentCourseSyncService.applyCourseGroups(assignment, resolvedCourseGroups))
-                || metadataChanged;
-            if (metadataChanged) {
-                assignment = saveAssignmentWithRetry(assignment);
-                logger.info("Synchronized metadata for existing assignment ID {} (contentUrl: {})",
-                    assignment.getId(), canonicalUrl);
-            }
-            logger.info("Assignment already exists for contentUrl: " + canonicalUrl + ", ID: " + assignment.getId());
-            return ResponseEntity.ok(toDto(assignment, synchronizeCreators || synchronizeCourses));
+            return respondWithExistingAssignment(existing, canonicalUrl, requestedAssignmentType,
+                synchronizeCreators, resolvedCreators, synchronizeCourses, resolvedCourseGroups);
         }
 
         try {
@@ -457,11 +437,66 @@ public class AssignmentsApiController {
             return new ResponseEntity<>(
                 toDto(savedAssignment, synchronizeCreators || synchronizeCourses),
                 HttpStatus.CREATED);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Another request for the same contentUrl won the race and committed first -
+            // the unique index on content_url (AssignmentContentUrlMigration) is what turns
+            // this into a constraint violation instead of a second, duplicate row. Not an
+            // error: resolve to whichever assignment actually landed and respond exactly as
+            // if we'd found it on the lookup above.
+            Assignment winner = assignmentRepo.findFirstByContentUrlOrderByIdAsc(canonicalUrl);
+            if (winner == null) {
+                // The index rejected us for some other reason (e.g. duplicate data already
+                // present from before the index existed) and there is truly nothing to
+                // return - surface the original failure rather than hide it.
+                logger.error("Error auto-creating assignment for contentUrl: " + contentUrl, e);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to create assignment: " + e.getMessage()));
+            }
+            logger.info("Lost the create race for contentUrl: " + canonicalUrl
+                + " - returning the assignment the concurrent request created, ID: " + winner.getId());
+            return respondWithExistingAssignment(winner, canonicalUrl, requestedAssignmentType,
+                synchronizeCreators, resolvedCreators, synchronizeCourses, resolvedCourseGroups);
         } catch (Exception e) {
             logger.error("Error auto-creating assignment for contentUrl: " + contentUrl, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", "Failed to create assignment: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Shared response path for "this contentUrl already has an assignment" - reached both
+     * from the normal pre-insert lookup and from autoCreateAssignment()'s race-recovery catch
+     * when a concurrent request's insert wins first. Still resynchronizes type/creator/course
+     * metadata here so a loser-of-the-race request (e.g. the sync bot re-running after
+     * someone else's browser request won) doesn't silently drop the metadata it was sent to
+     * apply.
+     */
+    private ResponseEntity<?> respondWithExistingAssignment(
+            Assignment existing,
+            String canonicalUrl,
+            String requestedAssignmentType,
+            boolean synchronizeCreators,
+            List<Person> resolvedCreators,
+            boolean synchronizeCourses,
+            List<com.open.spring.mvc.groups.Groups> resolvedCourseGroups) {
+        Assignment assignment = existing;
+        if (requestedAssignmentType != null
+                && !requestedAssignmentType.equalsIgnoreCase(assignment.getAssignmentType())) {
+            assignment.setAssignmentType(requestedAssignmentType);
+            assignment = saveAssignmentWithRetry(assignment);
+        }
+        boolean metadataChanged = synchronizeCreators
+            && assignmentCreatorSyncService.applyCreators(assignment, resolvedCreators);
+        metadataChanged = (synchronizeCourses
+            && assignmentCourseSyncService.applyCourseGroups(assignment, resolvedCourseGroups))
+            || metadataChanged;
+        if (metadataChanged) {
+            assignment = saveAssignmentWithRetry(assignment);
+            logger.info("Synchronized metadata for existing assignment ID {} (contentUrl: {})",
+                assignment.getId(), canonicalUrl);
+        }
+        logger.info("Assignment already exists for contentUrl: " + canonicalUrl + ", ID: " + assignment.getId());
+        return ResponseEntity.ok(toDto(assignment, synchronizeCreators || synchronizeCourses));
     }
 
     public ResponseEntity<?> autoCreateAssignment(
@@ -583,6 +618,13 @@ public class AssignmentsApiController {
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 return retryTemplate.execute(status -> assignmentRepo.save(assignment));
+            } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                // A unique constraint (content_url) rejecting this row is permanent, not a
+                // transient lock contention issue - retrying would just fail the same way
+                // three more times. autoCreateAssignment() has its own handling for this
+                // specific case (a concurrent request won the content_url race); other
+                // callers get the exception as before.
+                throw e;
             } catch (DataAccessException e) {
                 lastFailure = e;
                 logger.warn("Transient error saving assignment (attempt {}/{}): {}", attempt, maxAttempts, e.getMessage());
