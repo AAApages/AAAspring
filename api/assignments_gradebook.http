@@ -1,0 +1,231 @@
+# Assignment tracker, gradebook and AI queue checks (the Admin UI backend), run with the
+# VS Code REST Client extension. Start the server (./mvnw spring-boot:run) with the README's
+# .env defaults, then send the blocks top to bottom: later blocks reuse ids from earlier ones.
+#
+# REST Client keeps the jwt_java_spring cookie, so each "Log in" block switches the caller:
+#   toby = admin (CRUD + tracker), hop = student (submit, own grades, permission checks).
+# Expected status is in each block's title.
+
+@baseUrl = http://127.0.0.1:8585
+@adminUid = toby
+@adminPassword = 123Toby!
+@studentUid = hop
+@studentPassword = 123Grace!
+
+### ---------- Anonymous: everything below needs a login ----------
+
+### Anonymous tracker -> 401
+GET {{baseUrl}}/api/assignments/tracker
+
+### Anonymous gradebook roster -> 401
+GET {{baseUrl}}/api/synergy/gradebook/students
+
+### Anonymous AI queue -> 401
+GET {{baseUrl}}/api/submissions/ai-queue
+
+### ---------- Admin (toby): assignment CRUD + tracker ----------
+
+### Log in as admin -> 200
+POST {{baseUrl}}/authenticate
+Content-Type: application/json
+
+{
+  "uid": "{{adminUid}}",
+  "password": "{{adminPassword}}"
+}
+
+### CREATE a throwaway [TEST] assignment (text, 1 point, due in a week) -> 201
+# @name testAssignment
+POST {{baseUrl}}/api/assignments/test
+
+@assignmentId = {{testAssignment.response.body.$.id}}
+
+### READ it back by id -> 200, body is the name
+GET {{baseUrl}}/api/assignments/{{assignmentId}}
+
+### READ it in the tracker list (submissionCount / ungradedCount / pendingAiCount / rubricReady) -> 200
+GET {{baseUrl}}/api/assignments/tracker
+
+### Run the tracker's health checks -> 200, one {check, ok, message} per check
+GET {{baseUrl}}/api/assignments/{{assignmentId}}/checks
+
+### UPDATE details -> 200
+PUT {{baseUrl}}/api/assignments/{{assignmentId}}/details
+Content-Type: application/json
+
+{
+  "name": "[TEST] HTTP renamed",
+  "type": "test",
+  "description": "Edited from api/assignments_gradebook.http",
+  "points": 2,
+  "dueDate": "12/31/2026",
+  "assignmentType": "text"
+}
+
+### UPDATE with 0 points -> 200 today, although /checks then reports "Points must be greater than 0"
+PUT {{baseUrl}}/api/assignments/{{assignmentId}}/details
+Content-Type: application/json
+
+{
+  "name": "[TEST] HTTP renamed",
+  "type": "test",
+  "points": 0,
+  "dueDate": "12/31/2026"
+}
+
+### Put the points back -> 200
+PUT {{baseUrl}}/api/assignments/{{assignmentId}}/details
+Content-Type: application/json
+
+{
+  "name": "[TEST] HTTP renamed",
+  "type": "test",
+  "points": 1,
+  "dueDate": "12/31/2026"
+}
+
+### Set a rubric by hand -> 200
+PUT {{baseUrl}}/api/assignments/{{assignmentId}}/ai-rubric
+Content-Type: application/json
+
+{
+  "rubric": "0.9: complete and correct\n0.5: partially complete\n0.0: missing"
+}
+
+### Blank rubric -> 400
+PUT {{baseUrl}}/api/assignments/{{assignmentId}}/ai-rubric
+Content-Type: application/json
+
+{
+  "rubric": "  "
+}
+
+### Checks on a missing assignment -> 404
+GET {{baseUrl}}/api/assignments/999999999/checks
+
+### Gradebook course tabs as staff -> 200 (rows per student)
+GET {{baseUrl}}/api/synergy/gradebook/students?course=CSA
+
+### Gradebook with an unknown course -> 400
+GET {{baseUrl}}/api/synergy/gradebook/students?course=BOGUS
+
+### Gradebook "no class" tab -> 200
+GET {{baseUrl}}/api/synergy/gradebook/students?course=NONE
+
+### Full AI queue as staff -> 200 (running, nextRunInSeconds, queueLength, entries)
+GET {{baseUrl}}/api/submissions/ai-queue
+
+### ---------- Student (hop): submit, read own grades, permission checks ----------
+
+### Log in as student -> 200
+POST {{baseUrl}}/authenticate
+Content-Type: application/json
+
+{
+  "uid": "{{studentUid}}",
+  "password": "{{studentPassword}}"
+}
+
+### Who am I (copy the id) -> 200
+# @name me
+GET {{baseUrl}}/api/person/get
+
+@studentId = {{me.response.body.$.id}}
+
+### CREATE a text submission on the test assignment -> 201
+# @name submission
+POST {{baseUrl}}/api/submissions/submit/{{assignmentId}}
+Content-Type: application/json
+
+{
+  "submitterId": {{studentId}},
+  "isGroup": false,
+  "content": { "type": "text", "text": "Today I learned how REST Client keeps cookies between requests." },
+  "comment": "submitted from api/assignments_gradebook.http"
+}
+
+@submissionId = {{submission.response.body.$.id}}
+
+### Submit with the wrong content type -> 400
+POST {{baseUrl}}/api/submissions/submit/{{assignmentId}}
+Content-Type: application/json
+
+{
+  "submitterId": {{studentId}},
+  "isGroup": false,
+  "content": { "type": "link", "url": "https://example.com" }
+}
+
+### READ own submissions -> 200
+GET {{baseUrl}}/api/submissions/getSubmissions/{{studentId}}
+
+### READ own gradebook card -> 200
+GET {{baseUrl}}/api/synergy/gradebook/students/{{studentId}}
+
+### Another student's card -> 403
+GET {{baseUrl}}/api/synergy/gradebook/students/1
+
+### Roster as a student -> 403
+GET {{baseUrl}}/api/synergy/gradebook/students
+
+### Own AI queue (only own entries, plus queueLength) -> 200
+GET {{baseUrl}}/api/submissions/ai-queue
+
+### Tracker as a student -> 403
+GET {{baseUrl}}/api/assignments/tracker
+
+### Create a test assignment as a student -> 403
+POST {{baseUrl}}/api/assignments/test
+
+### Grade-now as a student -> 403
+POST {{baseUrl}}/api/submissions/ai-queue/{{submissionId}}/grade-now
+
+### Run the AI queue as a student -> 403
+POST {{baseUrl}}/api/submissions/ai-queue/run-now
+
+### Grade own submission as a student -> 403
+POST {{baseUrl}}/api/submissions/grade/{{submissionId}}?grade=1&feedback=self
+
+### Delete the test assignment as a student -> 403
+POST {{baseUrl}}/api/assignments/delete/{{assignmentId}}
+
+### Delete own submission as a student -> 403 (only staff, creators and graders manage submissions)
+DELETE {{baseUrl}}/api/submissions/{{submissionId}}
+
+### ---------- Admin again: grade, verify, clean up ----------
+
+### Log in as admin -> 200
+POST {{baseUrl}}/authenticate
+Content-Type: application/json
+
+{
+  "uid": "{{adminUid}}",
+  "password": "{{adminPassword}}"
+}
+
+### Grade the student's submission -> 200, needsAiRegrade false
+POST {{baseUrl}}/api/submissions/grade/{{submissionId}}?grade=0.8&feedback=Graded%20from%20HTTP
+
+### Grade above the assignment's points -> 200 today (no range check); /checks then flags "Grades in range"
+POST {{baseUrl}}/api/submissions/grade/{{submissionId}}?grade=5
+
+### Checks now report the out-of-range grade -> 200, "Grades in range" ok=false
+GET {{baseUrl}}/api/assignments/{{assignmentId}}/checks
+
+### Put a valid grade back -> 200
+POST {{baseUrl}}/api/submissions/grade/{{submissionId}}?grade=0.8&feedback=Graded%20from%20HTTP
+
+### Student card as staff shows the grade and gradedAt -> 200
+GET {{baseUrl}}/api/synergy/gradebook/students/{{studentId}}
+
+### Grade-now on a submission that is not queued -> 409 not_queued
+POST {{baseUrl}}/api/submissions/ai-queue/{{submissionId}}/grade-now
+
+### DELETE the submission -> 200
+DELETE {{baseUrl}}/api/submissions/{{submissionId}}
+
+### DELETE the test assignment -> 200
+POST {{baseUrl}}/api/assignments/delete/{{assignmentId}}
+
+### READ after delete -> 404
+GET {{baseUrl}}/api/assignments/{{assignmentId}}
