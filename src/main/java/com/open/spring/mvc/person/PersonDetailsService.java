@@ -178,6 +178,35 @@ public class PersonDetailsService implements UserDetailsService {  // "implement
         }
     }
 
+    /**
+     * The role with this name, made the first time it is needed. A role is a row in person_role, not a change to
+     * the schema, so a new role needs no database step.
+     */
+    public PersonRole findOrCreateRole(String roleName) {
+        PersonRole role = personRoleJpaRepository.findByName(roleName);
+        return role != null ? role : personRoleJpaRepository.save(new PersonRole(roleName));
+    }
+
+    /**
+     * Gives the person this role, or takes it away, and says whether there is such a person. Giving a role they
+     * have, or taking one they do not, changes nothing.
+     */
+    public boolean setRole(String uid, String roleName, boolean granted) {
+        Person person = personJpaRepository.findByUid(uid);
+        if (person == null) {
+            return false;
+        }
+        boolean has = person.getRoles().stream().anyMatch(role -> roleName.equals(role.getName()));
+        if (granted && !has) {
+            person.getRoles().add(findOrCreateRole(roleName));
+            personJpaRepository.save(person);
+        } else if (!granted && has) {
+            person.getRoles().removeIf(role -> roleName.equals(role.getName()));
+            personJpaRepository.save(person);
+        }
+        return true;
+    }
+
     public boolean existsByUid(String uid) {  // check if uid in db
         return personJpaRepository.existsByUid(uid);
     }
