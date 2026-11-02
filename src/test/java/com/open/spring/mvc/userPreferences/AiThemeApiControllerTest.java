@@ -52,6 +52,27 @@ class AiThemeApiControllerTest {
         verify(router).generate(contains("\"cozy rainy library\""), same(alice));
     }
 
+    @Test void themeSetsTextSizeAndButtonStyleWithinTheAllowedValues() {
+        when(router.generate(anyString(), any())).thenReturn("{\"size\":15,\"buttonStyle\":\"Rounded\"}");
+        Map<?, ?> theme = (Map<?, ?>) post("soft");
+        assertEquals(15, theme.get("size"));
+        assertEquals("rounded-all", theme.get("buttonStyle"));
+        verify(router).generate(contains("buttonStyle"), any());
+    }
+
+    @Test void aBadSizeOrButtonStyleCantMakeThePageHardToUse() {
+        when(router.generate(anyString(), any())).thenReturn("{\"size\":4,\"buttonStyle\":\"<b>\"}");
+        Map<?, ?> tiny = (Map<?, ?>) post("tiny");
+        assertEquals(13, tiny.get("size"));
+        assertEquals("default", tiny.get("buttonStyle"));
+
+        when(router.generate(anyString(), any())).thenReturn("{\"size\":72}");
+        assertEquals(16, ((Map<?, ?>) post("huge")).get("size"));
+
+        when(router.generate(anyString(), any())).thenReturn("{\"size\":\"big\"}");
+        assertEquals(14, ((Map<?, ?>) post("words")).get("size"));
+    }
+
     @Test void aiLogLinesAreTaggedAsAThemeNotASubmission() {
         when(router.generate(anyString(), any())).thenAnswer(call -> {
             assertEquals("ai-theme:7", MDC.get("aiSubmissionId"));
