@@ -20,7 +20,7 @@ import com.open.spring.mvc.lessonfeedback.LessonFeedbackRules.LessonInput;
 import com.open.spring.mvc.lessonfeedback.LessonFeedbackRules.SubmissionInput;
 import com.open.spring.mvc.lessonfeedback.LessonFeedbackRules.Summary;
 
-/** Saved ratings stay fixed, submissions need complete feedback, and summaries stay anonymous. */
+/** Saved ratings stay fixed, submissions need complete feedback, and summaries keep comments unnamed. */
 class LessonFeedbackRulesTest {
     private final LessonFeedbackRules rules = new LessonFeedbackRules();
 
@@ -88,30 +88,44 @@ class LessonFeedbackRulesTest {
     }
 
     @Test
-    void teachingTeamCannotRateOwnLesson() {
-        assertEquals(HttpStatus.FORBIDDEN, statusOf(() -> rules.requireNotTeachingTeam(7L, List.of(3L, 7L))));
-        rules.requireNotTeachingTeam(8L, List.of(3L, 7L));
-    }
+    void summaryBeforeAnyResponseHasZeroCountsAndNoAverages() {
+        Summary summary = rules.summarize(List.of(new Feedback(5, 5, 5, null, "unsubmitted", "unsubmitted")), new Random(1));
 
-    @Test
-    void summaryStaysHiddenBelowMinimumResponses() {
-        List<Feedback> records = new ArrayList<>();
-        for (int i = 0; i < LessonFeedbackRules.MIN_RESPONSES_FOR_SUMMARY - 1; i++) {
-            records.add(complete(5, "pros " + i, "grows " + i));
-        }
-        records.add(new Feedback(5, 5, 5, null, "unsubmitted", "unsubmitted"));
-
-        Summary summary = rules.summarize(records, new Random(1));
-
-        assertEquals(LessonFeedbackRules.MIN_RESPONSES_FOR_SUMMARY - 1, summary.responseCount());
-        assertFalse(summary.released());
+        assertEquals(0, summary.responseCount());
         assertNull(summary.averageLesson());
+        assertEquals(List.of(0, 0, 0, 0, 0), summary.counts().get("homework"));
         assertTrue(summary.pros().isEmpty());
         assertTrue(summary.grows().isEmpty());
     }
 
     @Test
-    void releasedSummaryAveragesAndShufflesCommentsSeparately() {
+    void summaryShowsTheFirstResponseAndIgnoresUnfinishedFeedback() {
+        Summary summary = rules.summarize(List.of(
+                complete(4, "Clear", "Slower"),
+                new Feedback(1, 1, 1, null, "unfinished", "unfinished")), new Random(1));
+
+        assertEquals(1, summary.responseCount());
+        assertEquals(4.0, summary.averageLesson());
+        assertEquals(List.of(0, 0, 0, 1, 0), summary.counts().get("lesson"));
+        assertEquals(List.of("Clear"), summary.pros());
+    }
+
+    @Test
+    void summaryCountsEachRatingFromOneToFive() {
+        Summary summary = rules.summarize(List.of(
+                new Feedback(1, 2, 3, 5, "a", "b"),
+                new Feedback(1, 2, 4, 5, "c", "d"),
+                new Feedback(5, 2, 3, 5, "e", "f")), new Random(1));
+
+        assertEquals(List.of("lesson", "engage", "popcorn", "homework"), List.copyOf(summary.counts().keySet()));
+        assertEquals(List.of(2, 0, 0, 0, 1), summary.counts().get("lesson"));
+        assertEquals(List.of(0, 3, 0, 0, 0), summary.counts().get("engage"));
+        assertEquals(List.of(0, 0, 2, 1, 0), summary.counts().get("popcorn"));
+        assertEquals(List.of(0, 0, 0, 0, 3), summary.counts().get("homework"));
+    }
+
+    @Test
+    void summaryAveragesAndShufflesCommentsSeparately() {
         List<Feedback> records = new ArrayList<>();
         List<String> submittedPros = new ArrayList<>();
         for (int i = 0; i < 8; i++) {
@@ -121,7 +135,6 @@ class LessonFeedbackRulesTest {
 
         Summary summary = rules.summarize(records, new Random(42));
 
-        assertTrue(summary.released());
         assertEquals(8, summary.responseCount());
         assertEquals(4.5, summary.averageLesson());
         assertEquals(3.0, summary.averageEngage());

@@ -74,7 +74,8 @@ class SelfAssessmentPausedTest {
         ReflectionTestUtils.setField(controller, "aiGrader", aiGrader);
         ReflectionTestUtils.setField(controller, "assignmentAuthorizationService", new AssignmentAuthorizationService());
 
-        AssignmentSubmissionHistoryService historyService = new AssignmentSubmissionHistoryService(submissionRepo, gradingService);
+        AssignmentSubmissionHistoryService historyService = new AssignmentSubmissionHistoryService(submissionRepo, gradingService,
+                org.mockito.Mockito.mock(com.open.spring.mvc.lessonfeedback.LessonFeedbackService.class));
         ReflectionTestUtils.setField(controller, "historyService", historyService);
         AssignmentSubmissionUploadService uploadService = new AssignmentSubmissionUploadService(
                 fileHandler, personRepo, assignmentRepo, historyService, aiGrader);

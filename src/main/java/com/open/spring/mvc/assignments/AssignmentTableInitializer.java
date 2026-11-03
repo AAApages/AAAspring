@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
 
-/** Adds the closure columns to assignment for databases managed with ddl-auto=none. */
+/** Adds the closure and team_teach columns to assignment for databases managed with ddl-auto=none. */
 @Component
 @RequiredArgsConstructor
 public class AssignmentTableInitializer {
@@ -24,6 +24,7 @@ public class AssignmentTableInitializer {
 
     void initialize() {
         TableSchema schema = TableSchema.of(jdbcTemplate);
-        schema.addColumns("assignment", "closed_at " + schema.timestamp(), "closed_by_id BIGINT");
+        schema.addColumns("assignment", "closed_at " + schema.timestamp(), "closed_by_id BIGINT",
+                "team_teach BOOLEAN");
     }
 }

@@ -117,6 +117,8 @@ public class AssignmentsApiController {
         public List<String> creatorUids;
         /** Weighted hacks parsed from the page; empty when the assignment is not hack-weighted. */
         public List<AssignmentRubricService.HackWeight> hackWeights;
+        /** A team-taught lesson: students give lesson feedback, and teachers see its Lesson Summary. */
+        public boolean teamTeach;
 
         public AssignmentDto(
                 Assignment assignment,
@@ -144,6 +146,7 @@ public class AssignmentsApiController {
             this.resourceUploadedBy = extractResourceUploader(assignment);
             this.contentUrl = assignment.getContentUrl();
             this.hackWeights = AssignmentRubricService.readHackWeights(assignment.getHackWeights());
+            this.teamTeach = Boolean.TRUE.equals(assignment.getTeamTeach());
         }
 
         private static String extractResourceUploader(Assignment assignment) {
@@ -303,8 +306,8 @@ public class AssignmentsApiController {
      * Any authenticated user (student, person, teacher, admin) can create assignments.
      * If an assignment with the same contentUrl already exists, it returns that instead of creating a duplicate.
      *
-     * Metadata synchronization is separate from creation: creatorUids and courseCodes are only honored for
-     * the trusted Pages bot (ROLE_ASSIGNMENT_SYNC). Browser calls omit the parameter entirely
+     * Metadata synchronization is separate from creation: creatorUids, courseCodes and teamTeach are only
+     * honored for the trusted Pages bot (ROLE_ASSIGNMENT_SYNC). Browser calls omit the parameter entirely
      * and keep their existing behavior.
      *
      * @param name The name of the assignment (required)
@@ -312,6 +315,7 @@ public class AssignmentsApiController {
      * @param description The description of the assignment (optional)
      * @param creatorUids Repeated form fields naming the assignment owners by Person.uid (optional, sync bot only)
      * @param courseCodes Repeated canonical course group names (optional, sync bot only)
+     * @param teamTeach The page's team_teach flag: homework waits for lesson feedback (optional, sync bot only)
      * @param userDetails The authenticated user making the request
      * @return The created or existing assignment with auto-generated ID
      */
@@ -327,6 +331,7 @@ public class AssignmentsApiController {
             @RequestParam(required = false) String pageContent,
             @RequestParam(required = false) List<String> creatorUids,
             @RequestParam(required = false) List<String> courseCodes,
+            @RequestParam(required = false) Boolean teamTeach,
             @AuthenticationPrincipal UserDetails userDetails
     ) {
         // Debug log input
@@ -361,9 +366,10 @@ public class AssignmentsApiController {
         // Absent parameter == legacy behavior, which is what the browser flow relies on.
         boolean synchronizeCreators = creatorUids != null;
         boolean synchronizeCourses = courseCodes != null;
+        boolean synchronizeTeamTeach = teamTeach != null;
         List<Person> resolvedCreators = List.of();
         List<com.open.spring.mvc.groups.Groups> resolvedCourseGroups = List.of();
-        if (synchronizeCreators || synchronizeCourses) {
+        if (synchronizeCreators || synchronizeCourses || synchronizeTeamTeach) {
             Person requester = personRepo.findByUid(userDetails.getUsername());
             if (!assignmentAuthorizationService.canSynchronizeAssignmentMetadata(requester)) {
                 logger.warn("Rejected assignment metadata synchronization from non-sync user '{}' for contentUrl {}",
@@ -443,6 +449,10 @@ public class AssignmentsApiController {
             metadataChanged = (synchronizeCourses
                 && assignmentCourseSyncService.applyCourseGroups(assignment, resolvedCourseGroups))
                 || metadataChanged;
+            if (synchronizeTeamTeach && teamTeach != Boolean.TRUE.equals(assignment.getTeamTeach())) {
+                assignment.setTeamTeach(teamTeach);
+                metadataChanged = true;
+            }
             if (metadataChanged) {
                 assignment = saveAssignmentWithRetry(assignment);
                 assignmentWasResaved = true;
@@ -491,7 +501,10 @@ public class AssignmentsApiController {
             if (synchronizeCourses) {
                 assignmentCourseSyncService.applyCourseGroups(newAssignment, resolvedCourseGroups);
             }
-            
+            if (synchronizeTeamTeach) {
+                newAssignment.setTeamTeach(teamTeach);
+            }
+
             normalizeAssignmentSequenceForSqlite();
             Assignment savedAssignment = saveAssignmentWithRetry(newAssignment);
             aiRegradeService.requestRubric(savedAssignment.getId(), name, description, pageContent);
@@ -528,7 +541,7 @@ public class AssignmentsApiController {
             List<String> creatorUids,
             UserDetails userDetails) {
         return autoCreateAssignment(
-            name, contentUrl, description, points, dueDate, null, null, creatorUids, null, userDetails);
+            name, contentUrl, description, points, dueDate, null, null, creatorUids, null, null, userDetails);
     }
 
     /**
