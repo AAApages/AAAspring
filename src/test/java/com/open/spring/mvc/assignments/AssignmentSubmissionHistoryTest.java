@@ -34,6 +34,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.open.spring.mvc.groups.CourseGroupProperties;
 import com.open.spring.mvc.groups.Groups;
 import com.open.spring.mvc.groups.GroupsJpaRepository;
+import com.open.spring.mvc.lessonfeedback.LessonFeedbackService;
 import com.open.spring.mvc.person.Person;
 import com.open.spring.mvc.person.PersonJpaRepository;
 import com.open.spring.mvc.synergy.GradebookService;
@@ -46,6 +47,7 @@ class AssignmentSubmissionHistoryTest {
 
     private AssignmentSubmissionJPA submissionRepo;
     private SubmissionGradingService gradingService;
+    private LessonFeedbackService lessonFeedback;
     private AssignmentSubmissionHistoryService service;
     private Person alice;
     private Assignment assignment;
@@ -54,7 +56,8 @@ class AssignmentSubmissionHistoryTest {
     void setUp() {
         submissionRepo = mock(AssignmentSubmissionJPA.class);
         gradingService = mock(SubmissionGradingService.class);
-        service = new AssignmentSubmissionHistoryService(submissionRepo, gradingService);
+        lessonFeedback = mock(LessonFeedbackService.class); // false by default: no feedback is missing
+        service = new AssignmentSubmissionHistoryService(submissionRepo, gradingService, lessonFeedback);
         alice = student(1L, "alice");
         assignment = assignment(10L, "Loops");
         when(gradingService.submit(any(), any())).thenReturn(GradingResult.of(GradingOutcome.REVISION_CREATED, null));
@@ -121,6 +124,17 @@ class AssignmentSubmissionHistoryTest {
 
             verify(gradingService).revise(same(newest), any(), any());
             assertEquals("https://first", oldest.getContent().get("url"));
+        }
+
+        @Test
+        void homeworkWaitsForMissingLessonFeedbackAndSavesNothing() {
+            when(lessonFeedback.isFeedbackMissing(alice, assignment)).thenReturn(true);
+
+            AssignmentSubmissionHistoryService.SubmitResult result = service.submit(draft("https://a"), alice);
+
+            assertEquals(GradingOutcome.LESSON_FEEDBACK_REQUIRED, result.result().outcome());
+            verify(gradingService, never()).submit(any(), any());
+            verify(gradingService, never()).revise(any(), any(), any());
         }
     }
 
@@ -321,6 +335,16 @@ class AssignmentSubmissionHistoryTest {
 
             assertEquals(GradingResponse.from(GradingResult.of(GradingOutcome.ASSIGNMENT_CLOSED, null)).getStatusCode(),
                     response.getStatusCode());
+        }
+
+        @Test
+        void submitWithoutLessonFeedbackAnswersConflictWithTheTypedOutcome() {
+            when(lessonFeedback.isFeedbackMissing(alice, assignment)).thenReturn(true);
+
+            var response = controller.submitAssignment(10L, request("https://new"), login("alice"));
+
+            assertEquals(409, response.getStatusCode().value());
+            assertEquals(GradingOutcome.LESSON_FEEDBACK_REQUIRED, ((GradingResponse) response.getBody()).outcome());
         }
 
         @Test

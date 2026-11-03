@@ -24,6 +24,8 @@ public enum GradingOutcome {
     ASSIGNMENT_CLOSED,
     /** The assignment was closed and its grades copied to the gradebook. */
     ASSIGNMENT_FINALIZED,
+    /** A team-taught lesson's homework waits for the submitter's complete lesson feedback. */
+    LESSON_FEEDBACK_REQUIRED,
     REVIEW_REQUIRES_CLOSE,
     REVIEW_OPENED,
     REVIEW_ALREADY_OPEN,

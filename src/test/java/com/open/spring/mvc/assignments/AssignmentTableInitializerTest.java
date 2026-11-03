@@ -37,8 +37,9 @@ class AssignmentTableInitializerTest {
         initializer.initialize();
         initializer.initialize();
 
-        assertEquals(List.of("id", "name", "closed_at", "closed_by_id"),
+        assertEquals(List.of("id", "name", "closed_at", "closed_by_id", "team_teach"),
                 jdbc.queryForList("SELECT name FROM pragma_table_info('assignment')", String.class));
         assertNull(jdbc.queryForObject("SELECT closed_at FROM assignment WHERE id = 1", String.class));
+        assertNull(jdbc.queryForObject("SELECT team_teach FROM assignment WHERE id = 1", String.class));
     }
 }

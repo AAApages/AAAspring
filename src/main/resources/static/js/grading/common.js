@@ -23,6 +23,7 @@ window.Grading = (function () {
     ASSIGNMENT_NOT_FOUND: 'This assignment no longer exists.',
     ASSIGNMENT_CLOSED: 'This assignment is closed, so its grades are final. Changes go through a teacher review.',
     ASSIGNMENT_FINALIZED: 'Assignment closed. Grades are final and copied to the gradebook.',
+    LESSON_FEEDBACK_REQUIRED: 'Finish your lesson feedback before you submit this homework.',
     REVIEW_REQUIRES_CLOSE: 'Reviews are for closed assignments. Before close, grade or re-grade directly.',
     REVIEW_OPENED: 'Review opened.',
     REVIEW_ALREADY_OPEN: 'This submission already has an open review.',

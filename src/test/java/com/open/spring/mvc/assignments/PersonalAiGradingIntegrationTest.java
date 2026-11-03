@@ -187,7 +187,8 @@ class PersonalAiGradingIntegrationTest {
             new AssignmentAuthorizationService());
         ReflectionTestUtils.setField(controller, "gradingService", gradingService);
         ReflectionTestUtils.setField(controller, "aiGrader", new SubmissionAiGrader(ai, gradingService, mock(GradeReviewService.class)));
-        ReflectionTestUtils.setField(controller, "historyService", new AssignmentSubmissionHistoryService(submissions, gradingService));
+        ReflectionTestUtils.setField(controller, "historyService", new AssignmentSubmissionHistoryService(submissions, gradingService,
+                org.mockito.Mockito.mock(com.open.spring.mvc.lessonfeedback.LessonFeedbackService.class)));
     }
     private UserDetails login(String uid) { return User.withUsername(uid).password("unused").authorities("ROLE_USER").build(); }
 }

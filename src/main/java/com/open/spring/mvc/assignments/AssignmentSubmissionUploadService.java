@@ -79,6 +79,9 @@ public class AssignmentSubmissionUploadService {
         if (assignment.isClosed()) {
             throw new UploadException(GradingOutcome.ASSIGNMENT_CLOSED);
         }
+        if (historyService.isLessonFeedbackMissing(authenticatedUser, assignment)) {
+            throw new UploadException(GradingOutcome.LESSON_FEEDBACK_REQUIRED);
+        }
 
         String originalFilename = sanitizeFilename(file);
         String s3Filename = buildS3Filename(assignment.getName(), originalFilename);

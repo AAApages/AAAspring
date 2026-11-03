@@ -36,7 +36,7 @@ public record GradingResponse(GradingOutcome outcome, SubmissionGradingState gra
                     REVIEW_NO_CHANGE, GRADE_CORRECTED -> HttpStatus.OK;
             case REVIEW_OPENED -> HttpStatus.CREATED;
             case STALE_REVISION, NO_MANUAL_OVERRIDE, ASSIGNMENT_CLOSED, REVIEW_REQUIRES_CLOSE,
-                    REVIEW_ALREADY_OPEN, REVIEW_NOT_OPEN -> HttpStatus.CONFLICT;
+                    REVIEW_ALREADY_OPEN, REVIEW_NOT_OPEN, LESSON_FEEDBACK_REQUIRED -> HttpStatus.CONFLICT;
             case INVALID_GRADE, REASON_REQUIRED, DECISION_REQUIRED, RATIONALE_REQUIRED -> HttpStatus.BAD_REQUEST;
             case NOT_PERMITTED -> HttpStatus.FORBIDDEN;
             case AI_NOT_GRADEABLE -> HttpStatus.UNPROCESSABLE_ENTITY;
