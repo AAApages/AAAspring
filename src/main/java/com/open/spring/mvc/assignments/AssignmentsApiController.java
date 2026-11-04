@@ -871,27 +871,6 @@ public class AssignmentsApiController {
     }
 
     /**
-     * A POST endpoint to edit an assignment.
-     * @param name The name of the assignment.
-     * @param body The new information about the assignment.
-     * @return The edited assignment.
-     */
-    @PostMapping("/edit/{name}")
-    public ResponseEntity<?> editAssignment(
-            @PathVariable String name,
-            @RequestBody String body) {
-        Assignment assignment = assignmentRepo.findByName(name);
-        if (assignment != null) {
-            assignment.setName(name);
-            assignmentRepo.save(assignment);
-            return new ResponseEntity<>(assignment, HttpStatus.OK);
-        }
-        Map<String, String> error = new HashMap<>();
-        error.put("error", "Assignment not found: " + name);
-        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
-    }
-
-    /**
      * A GET endpoint to retrieve all submissions for a student.
      * @param studentId The ID of the student.
      * @return A list of all submissions for the student.
