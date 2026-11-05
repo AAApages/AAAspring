@@ -9,9 +9,11 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +39,10 @@ public class SprintRetroService {
     static final int MAX_NAME = 100;
     static final int MAX_TEXT = 2000;
     static final int MAX_COMMENT = 1000;
+    static final int MAX_CHECKS = 300;
+
+    /** Checklist ids: Pages derives them from the checkboxes on each sprint's own page, so only their form is checked. */
+    private static final Pattern CHECK_ID = Pattern.compile("[a-z0-9-]{1,40}");
 
     /** What the student enters: a rank per item id, text per section or prompt key, and ticked checklist ids. */
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -52,6 +58,10 @@ public class SprintRetroService {
         static TeacherPart empty() {
             return new TeacherPart(Map.of(), Map.of(), null);
         }
+    }
+
+    /** One sprint as the school calendar defines it (_data/school_calendar.yml in Pages). */
+    public record CalendarSprint(String name, LocalDate startDate, LocalDate endDate) {
     }
 
     /** A sprint as the API returns it. */
@@ -134,6 +144,32 @@ public class SprintRetroService {
         sprint.setCreatedBy(teacher);
         sprint.setCreatedAt(LocalDateTime.now(clock));
         return SprintView.of(sprintRepository.save(sprint));
+    }
+
+    /**
+     * Makes the stored sprints match the school calendar, matching by name so reflections stay
+     * attached, and returns every sprint. A row is written only when it is new or its dates moved.
+     * Sprints the calendar does not list are left alone so no student work is lost.
+     */
+    @Transactional
+    public List<SprintView> syncCalendar(Person teacher, List<CalendarSprint> calendar) {
+        if (calendar == null || calendar.isEmpty()) {
+            throw new InvalidRetroException("the calendar lists no sprints");
+        }
+        Map<String, SprintRetroEntity> byName = new LinkedHashMap<>();
+        sprintRepository.findAllByOrderByStartDateAscIdAsc().forEach(sprint -> byName.putIfAbsent(sprint.getName(), sprint));
+        for (CalendarSprint entry : calendar) {
+            String name = trim(entry.name());
+            SprintRetroEntity existing = name == null ? null : byName.get(name);
+            if (existing == null) {
+                createSprint(teacher, entry.name(), entry.startDate(), entry.endDate());
+            } else if (!Objects.equals(existing.getStartDate(), entry.startDate())
+                    || !Objects.equals(existing.getEndDate(), entry.endDate())) {
+                apply(existing, entry.name(), entry.startDate(), entry.endDate());
+                sprintRepository.save(existing);
+            }
+        }
+        return sprints();
     }
 
     /** Renames or re-dates a sprint; empty when there is no sprint with that id. */
@@ -265,9 +301,12 @@ public class SprintRetroService {
         }
         Set<String> checks = new LinkedHashSet<>();
         if (part.checks() != null) {
+            if (part.checks().size() > MAX_CHECKS) {
+                problems.add("at most " + MAX_CHECKS + " checklist items");
+            }
             for (String id : part.checks()) {
-                if (!SprintRetroTemplate.CHECK_IDS.contains(id)) {
-                    problems.add("unknown checklist item " + id);
+                if (id == null || !CHECK_ID.matcher(id).matches()) {
+                    problems.add("invalid checklist item " + id);
                 } else {
                     checks.add(id);
                 }

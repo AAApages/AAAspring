@@ -178,9 +178,6 @@ public final class SprintRetroTemplate {
     /** Keys that hold written text: section summaries and prompts. */
     static final Set<String> TEXT_KEYS;
 
-    /** Checklist statement ids. */
-    static final Set<String> CHECK_IDS;
-
     static {
         Map<String, Item> items = new LinkedHashMap<>();
         Map<String, String> sectionOf = new LinkedHashMap<>();
@@ -195,12 +192,9 @@ public final class SprintRetroTemplate {
             }
             evaluation.prompts().forEach(prompt -> textKeys.add(prompt.key()));
         }
-        Set<String> checkIds = new LinkedHashSet<>();
-        GROUND_0.checklist().forEach(section -> section.checks().forEach(check -> checkIds.add(check.id())));
         ITEMS = Map.copyOf(items);
         SECTION_OF = Map.copyOf(sectionOf);
         TEXT_KEYS = Set.copyOf(textKeys);
-        CHECK_IDS = Set.copyOf(checkIds);
     }
 
     private SprintRetroTemplate() {
