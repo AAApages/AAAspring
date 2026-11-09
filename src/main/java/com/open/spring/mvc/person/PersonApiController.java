@@ -273,6 +273,62 @@ public class PersonApiController {
         return new ResponseEntity<>(HttpStatus.NOT_FOUND);
     }
 
+    /** The only role Flask may give or take away this way. */
+    private static final String ROLE_MENTOR = "ROLE_MENTOR";
+
+    // The secret Spring shares with Flask (it also signs password-reset tokens). Blank when it is not set.
+    @Value("${RESET_TOKEN_SECRET:}")
+    private String mentorStatementSecret;
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @Getter
+    @Setter
+    public static class MentorConfirmDto {
+        // The statement Flask signed at login (see MentorRoleStatement)
+        private String attestation;
+    }
+
+    /**
+     * Gives the logged-in person ROLE_MENTOR, or takes it away, because Flask says so. Whether a Teacher or Admin has
+     * verified a mentor is kept in Flask, which signs a statement at login; the page passes it here. It is accepted
+     * only if the signature and the end time are good and it is about the person making the request, and only
+     * ROLE_MENTOR can be set this way, so a statement can never be turned into any other role.
+     */
+    @PostMapping("/person/mentor/confirm")
+    public ResponseEntity<Object> confirmMentorRole(@RequestBody MentorConfirmDto body, Authentication authentication) {
+        if (body == null || body.getAttestation() == null || body.getAttestation().isBlank()) {
+            return jsonError(HttpStatus.BAD_REQUEST, "attestation is required");
+        }
+        if (mentorStatementSecret == null || mentorStatementSecret.isBlank()) {
+            return jsonError(HttpStatus.SERVICE_UNAVAILABLE, "mentor role statements are not configured on this server");
+        }
+        java.util.Optional<MentorRoleStatement> statement = MentorRoleStatement.verify(body.getAttestation(), mentorStatementSecret);
+        if (statement.isEmpty() || !statement.get().getUid().equals(authentication.getName())) {
+            return jsonError(HttpStatus.FORBIDDEN, "not a valid statement for you");
+        }
+        if (!ROLE_MENTOR.equals(statement.get().getRole())) {
+            return jsonError(HttpStatus.BAD_REQUEST, "that role cannot be set this way");
+        }
+        if (!personDetailsService.setRole(statement.get().getUid(), ROLE_MENTOR, statement.get().isGranted())) {
+            return jsonError(HttpStatus.NOT_FOUND, "no such person");
+        }
+        logger.info("AUDIT mentor_role uid={} granted={}", statement.get().getUid(), statement.get().isGranted());
+        JSONObject responseObject = new JSONObject();
+        responseObject.put("role", ROLE_MENTOR);
+        responseObject.put("granted", statement.get().isGranted());
+        HttpHeaders responseHeaders = new HttpHeaders();
+        responseHeaders.setContentType(MediaType.APPLICATION_JSON);
+        return new ResponseEntity<>(responseObject.toString(), responseHeaders, HttpStatus.OK);
+    }
+
+    private static ResponseEntity<Object> jsonError(HttpStatus status, String message) {
+        HttpHeaders responseHeaders = new HttpHeaders();
+        responseHeaders.setContentType(MediaType.APPLICATION_JSON);
+        JSONObject responseObject = new JSONObject();
+        responseObject.put("error", message);
+        return new ResponseEntity<>(responseObject.toString(), responseHeaders, status);
+    }
+
     /*
      * DTO (Data Transfer Object) to support POST request for postPerson method
      * .. represents the data in the request body
