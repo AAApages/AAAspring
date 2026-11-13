@@ -113,8 +113,6 @@ public class SecurityConfig {
                         // Gist reading stays public; an unlisted URL is
                         //    already shareable, so reading one adds no exposure)
                         .requestMatchers(HttpMethod.GET, "/api/grades/read-gist/**").permitAll()
-                        // ← MAKE DEBUGGER - PUBLIC (NO AUTH)
-                        .requestMatchers("/api/make/**").permitAll()
                         // (DELETE/PUT /api/person/** are declared above, ahead of the create permit.)
                         .requestMatchers(HttpMethod.GET, "/api/person/uid/**").permitAll()
                         // Face biometric data:
