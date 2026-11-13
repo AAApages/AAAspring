@@ -373,5 +373,153 @@ class AssignmentSubmissionHistoryTest {
             assertEquals(404, controller.getSubmissionHistory(6L, login("alice")).getStatusCode().value());
             assertNull(service.historyOf(current).versions().get(0).submittedAt());
         }
+
+        /** alice's submission 7 at revision 2, with revision 1 ("https://v1") in its history. */
+        private AssignmentSubmission revisedTwice() {
+            AssignmentSubmission current = stored(7L, "https://v2", 0.9);
+            current.setRevision(2);
+            when(submissionRepo.findById(7L)).thenReturn(Optional.of(current));
+            when(submissionRepo.findBySubmitterId(1L)).thenReturn(List.of(current));
+            when(gradingService.history(7L)).thenReturn(List.of(
+                    event(1, SubmissionGradeEventEntity.Type.SUBMITTED, "https://v1", null, 0),
+                    event(2, SubmissionGradeEventEntity.Type.REVISED, "https://v2", null, 2)));
+            return current;
+        }
+
+        @Test
+        void restoringAVersionSubmitsItsContentAsANewRevision() {
+            AssignmentSubmission current = revisedTwice();
+
+            var response = controller.restoreSubmissionVersion(7L,
+                    new AssignmentSubmissionAPIController.RestoreRequest(7L, 1), login("alice"));
+
+            assertEquals(GradingOutcome.REVISION_CREATED, ((GradingResponse) response.getBody()).outcome());
+            verify(gradingService).revise(same(current), eq(Map.of("type", "link", "url", "https://v1")), same(alice));
+        }
+
+        @Test
+        void restoreIsRefusedForAnotherStudentAClosedAssignmentAndAnUnknownVersion() {
+            revisedTwice();
+            var restoreV1 = new AssignmentSubmissionAPIController.RestoreRequest(7L, 1);
+
+            assertEquals(403, controller.restoreSubmissionVersion(7L, restoreV1, login("bob")).getStatusCode().value());
+            assertEquals(404, controller.restoreSubmissionVersion(7L,
+                    new AssignmentSubmissionAPIController.RestoreRequest(7L, 2), login("alice")).getStatusCode().value(),
+                    "the current version is not an earlier one");
+            verify(gradingService, never()).revise(any(), any(), any());
+
+            when(gradingService.revise(any(), any(), any())).thenReturn(GradingResult.of(GradingOutcome.ASSIGNMENT_CLOSED, null));
+            var closed = controller.restoreSubmissionVersion(7L, restoreV1, login("alice"));
+            assertEquals(GradingOutcome.ASSIGNMENT_CLOSED, ((GradingResponse) closed.getBody()).outcome());
+        }
+
+        private SubmissionAiGrader aiGrader() {
+            return (SubmissionAiGrader) ReflectionTestUtils.getField(controller, "aiGrader");
+        }
+
+        private AssignmentSubmissionAPIController.RestoreRequest version(Long submissionId, Integer revision) {
+            return new AssignmentSubmissionAPIController.RestoreRequest(submissionId, revision);
+        }
+
+        @Test
+        void aRestoredVersionIsAiGradedButAnUnchangedOneIsNot() {
+            AssignmentSubmission current = revisedTwice();
+
+            controller.restoreSubmissionVersion(7L, version(7L, 1), login("alice"));
+            verify(aiGrader()).autoGrade(same(current));
+
+            when(gradingService.revise(any(), any(), any())).thenReturn(GradingResult.of(GradingOutcome.CONTENT_UNCHANGED, null));
+            var unchanged = controller.restoreSubmissionVersion(7L, version(7L, 1), login("alice"));
+            assertEquals(GradingOutcome.CONTENT_UNCHANGED, ((GradingResponse) unchanged.getBody()).outcome());
+            verify(aiGrader(), times(1)).autoGrade(any());
+        }
+
+        @Test
+        void anOldDuplicateRowCanBeRestoredOntoTheCurrentSubmission() {
+            AssignmentSubmission legacy = stored(3L, "https://legacy", 0.4);
+            AssignmentSubmission current = stored(7L, "https://now", null);
+            when(submissionRepo.findById(3L)).thenReturn(Optional.of(legacy));
+            when(submissionRepo.findById(7L)).thenReturn(Optional.of(current));
+            when(submissionRepo.findBySubmitterId(1L)).thenReturn(List.of(current, legacy));
+            when(gradingService.history(7L)).thenReturn(List.of());
+
+            // Named by the old row's id, with no revision; the path may name either row.
+            var response = controller.restoreSubmissionVersion(3L, version(3L, null), login("alice"));
+
+            assertEquals(GradingOutcome.REVISION_CREATED, ((GradingResponse) response.getBody()).outcome());
+            verify(gradingService).revise(same(current), eq(Map.of("type", "link", "url", "https://legacy")), same(alice));
+        }
+
+        @Test
+        void aTeacherCanRestoreAStudentsVersion() {
+            AssignmentSubmission current = revisedTwice();
+            Person teacher = AssignmentCreatorFixtures.teacher(9L, "teach");
+            when(people.findByUid("teach")).thenReturn(teacher);
+
+            controller.restoreSubmissionVersion(7L, version(7L, 1), login("teach"));
+
+            verify(gradingService).revise(same(current), eq(Map.of("type", "link", "url", "https://v1")), same(teacher));
+        }
+
+        @Test
+        void aGroupMemberCanRestoreTheGroupsSubmissionButNotAnOutsider() {
+            Groups team = new Groups();
+            ReflectionTestUtils.setField(team, "id", 50L);
+            AssignmentSubmission current = revisedTwice();
+            current.setSubmitter(team);
+            when(submissionRepo.findBySubmitterId(50L)).thenReturn(List.of(current));
+            when(groups.findGroupsByPersonId(1L)).thenReturn(List.of(team));
+
+            assertEquals(403, controller.restoreSubmissionVersion(7L, version(7L, 1), login("bob")).getStatusCode().value());
+            var response = controller.restoreSubmissionVersion(7L, version(7L, 1), login("alice"));
+            assertEquals(GradingOutcome.REVISION_CREATED, ((GradingResponse) response.getBody()).outcome());
+        }
+
+        @Test
+        void badRequestsChangeNothing() {
+            revisedTwice();
+
+            assertEquals(401, controller.restoreSubmissionVersion(7L, version(7L, 1), null).getStatusCode().value());
+            assertEquals(404, controller.restoreSubmissionVersion(99L, version(7L, 1), login("alice")).getStatusCode().value(),
+                    "no such submission");
+            assertEquals(404, controller.restoreSubmissionVersion(7L, null, login("alice")).getStatusCode().value(), "no body");
+            assertEquals(404, controller.restoreSubmissionVersion(7L, version(7L, 99), login("alice")).getStatusCode().value(),
+                    "no such revision");
+            assertEquals(404, controller.restoreSubmissionVersion(7L, version(8L, 1), login("alice")).getStatusCode().value(),
+                    "a revision of another submission");
+            assertEquals(404, controller.restoreSubmissionVersion(7L, version(null, null), login("alice")).getStatusCode().value());
+            verify(gradingService, never()).revise(any(), any(), any());
+        }
+
+        @Test
+        void aVersionThatNoLongerFitsTheAssignmentIsRefused() {
+            revisedTwice();
+            assignment.setAssignmentType("text"); // the teacher changed the submission type after v1
+
+            var response = controller.restoreSubmissionVersion(7L, version(7L, 1), login("alice"));
+
+            assertEquals(400, response.getStatusCode().value());
+            assertTrue(String.valueOf(response.getBody()).contains("now takes text"), String.valueOf(response.getBody()));
+            verify(gradingService, never()).revise(any(), any(), any());
+        }
+
+        @Test
+        void anOldCodeLinkThatIsNotAGistIsRefused() {
+            AssignmentSubmission current = stored(7L, "https://gist.github.com/alice/abc123", 0.9);
+            current.setContent(Map.of("type", "code", "url", "https://gist.github.com/alice/abc123"));
+            current.setRevision(2);
+            assignment.setAssignmentType("code");
+            when(submissionRepo.findById(7L)).thenReturn(Optional.of(current));
+            when(submissionRepo.findBySubmitterId(1L)).thenReturn(List.of(current));
+            SubmissionGradeEventEntity v1 = event(1, SubmissionGradeEventEntity.Type.SUBMITTED, null, null, 0);
+            v1.setContent(Map.of("type", "code", "url", "https://example.com/not-a-gist"));
+            when(gradingService.history(7L)).thenReturn(List.of(v1,
+                    event(2, SubmissionGradeEventEntity.Type.REVISED, "https://gist.github.com/alice/abc123", null, 2)));
+
+            var response = controller.restoreSubmissionVersion(7L, version(7L, 1), login("alice"));
+
+            assertEquals(400, response.getStatusCode().value());
+            verify(gradingService, never()).revise(any(), any(), any());
+        }
     }
 }

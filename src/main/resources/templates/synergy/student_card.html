@@ -70,7 +70,8 @@
     const personId = /*[[${personId}]]*/ 0;
     const isStaff = /*[[${isStaff}]]*/ false;
     const { esc, api, formatPct, formatGrade, statusBadge, pctClass, debounce, toast, submissionDetailHtml,
-        gradingOutcomeText, saveManualGrade, clearManualGrade, requestAiGrade, gradeSourceBadge } = window.Grading;
+        gradingOutcomeText, saveManualGrade, clearManualGrade, requestAiGrade, gradeSourceBadge,
+        loadingHtml, busy, showHistory: showHistoryIn } = window.Grading;
     const rowsEl = document.getElementById('submissionRows');
     const search = document.getElementById('assignmentSearch');
     const statusFilter = document.getElementById('statusFilter');
@@ -87,39 +88,19 @@
         modal.querySelector('[data-close]').focus();
     }
 
-    function formatWhen(value) {
-        return value ? new Date(value).toLocaleString() : null;
-    }
-
-    // Every version of a submission, the current one first (open), earlier ones collapsed below it.
-    async function showHistory(id) {
+    // Revisions like GitHub: a dropdown with the newest selected, compare with the one before,
+    // and restore (submitted again as a new revision). Closed assignments can't be restored.
+    function showHistory(id) {
         const s = card.submissions.find(x => String(x.submissionId) === String(id));
         if (!s) return;
-        const submitter = s.submitterName || card.name || 'Unknown';
         document.getElementById('submissionTitle').textContent = `${s.assignmentName || 'Submission'} · history`;
-        const body = document.getElementById('submissionBody');
-        body.innerHTML = '<div class="g-sub">Loading…</div>';
         modal.classList.add('open');
         modal.querySelector('[data-close]').focus();
-        try {
-            const history = await api(`/api/submissions/${id}/history`);
-            const count = history.versions.length;
-            body.innerHTML = `<div class="g-sub mb-2">${count} version${count === 1 ? '' : 's'}, newest first</div>`
-                + history.versions.map((v, i) => {
-                    const submitted = formatWhen(v.submittedAt);
-                    const label = v.current ? 'Current submission'
-                        : `Version ${count - i}${v.replacedAt ? ` · replaced ${esc(formatWhen(v.replacedAt))}` : ''}`;
-                    return `<details class="g-panel" ${v.current ? 'open' : ''}>
-                        <summary><b>${label}</b>
-                            ${v.current ? '<span class="g-badge ok">Current</span>' : ''}
-                            ${submitted ? `<span class="g-sub">submitted ${esc(submitted)}</span>` : ''}
-                        </summary>
-                        <div class="mt-2">${submissionDetailHtml(v, submitter, history.points ?? s.points)}</div>
-                    </details>`;
-                }).join('');
-        } catch (e) {
-            body.innerHTML = `<div class="g-sub">Could not load history: ${esc(e.message)}</div>`;
-        }
+        showHistoryIn(document.getElementById('submissionBody'), id, {
+            submitter: s.submitterName || card.name || 'Unknown',
+            points: s.points,
+            onRestored: load,
+        });
     }
 
     modal.addEventListener('click', e => {
@@ -130,6 +111,7 @@
     });
 
     async function load() {
+        if (!card) rowsEl.innerHTML = loadingHtml('Loading grades…', 5);
         try {
             card = await api(`/api/synergy/gradebook/students/${personId}`);
         } catch (e) {
@@ -183,7 +165,7 @@
     function staffActions(s) {
         // Closed assignments are reviewed in the tracker.
         if (s.grading?.closed) {
-            return `<a class="g-btn" href="/mvc/assignments/tracker" title="Open the assignment in the tracker to review this grade">Review in tracker</a>`;
+            return `<a class="g-btn" href="/mvc/assignments/tracker?assignment=${s.assignmentId}" title="Open the assignment in the tracker to review this grade">Review in tracker</a>`;
         }
         return `<input type="number" step="0.01" min="0" max="${s.points ?? 1}" class="g-grade-input" aria-label="New grade"
                     value="${s.grade ?? ''}" placeholder="/ ${s.points ?? 1}">
@@ -213,6 +195,7 @@
         }
         const entry = card.submissions.find(x => String(x.submissionId) === String(id));
         const revision = entry?.grading?.revision;
+        const restore = button.dataset.action === 'ai' ? busy(button, 'Grading…') : null;
         button.disabled = true;
         try {
             let result;
@@ -223,7 +206,6 @@
             } else if (button.dataset.action === 'clear') {
                 result = await clearManualGrade(id, revision);
             } else {
-                button.textContent = 'Grading…';
                 result = await requestAiGrade(id);
             }
             const aiGrade = result.grading?.aiGrade;
@@ -232,8 +214,7 @@
             await load();
         } catch (e) {
             toast(e.message, false);
-            button.disabled = false;
-            if (button.dataset.action === 'ai') button.textContent = 'AI grade';
+            if (restore) restore(); else button.disabled = false;
         }
     });
 

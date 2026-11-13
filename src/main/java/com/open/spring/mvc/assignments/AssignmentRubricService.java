@@ -150,8 +150,21 @@ public class AssignmentRubricService {
 
     private static final Pattern DUE_DATE = Pattern.compile("^(0?[1-9]|1[0-2])/(0?[1-9]|[12][0-9]|3[01])/\\d{4}$");
 
-    /** One result of {@link #runChecks}: {@code ok} false means the assignment has that problem. */
-    public record Check(String check, boolean ok, String message) {
+    /**
+     * One result of {@link #runChecks}: {@code ok} false means the assignment has that problem, and
+     * {@code fix} says how the tracker's Fix button repairs it (see {@link Fix}).
+     */
+    public record Check(String check, boolean ok, String message, Fix fix) {
+    }
+
+    /**
+     * How a failed check is fixed from the tracker. EDIT_* open the edit form on that field,
+     * REGENERATE_RUBRIC asks the AI for a new rubric, REGRADE_OUT_OF_RANGE re-grades submissions
+     * above the points, and NONE means there is nothing to do but wait (the AI queue).
+     */
+    public enum Fix {
+        EDIT_NAME, EDIT_POINTS, EDIT_DUE_DATE, EDIT_SUBMISSION_TYPE, EDIT_CONTENT_URL, REGENERATE_RUBRIC,
+        REGRADE_OUT_OF_RANGE, NONE
     }
 
     /**
@@ -161,27 +174,30 @@ public class AssignmentRubricService {
     public static List<Check> runChecks(Assignment assignment, List<AssignmentSubmission> submissions) {
         List<Check> checks = new java.util.ArrayList<>();
         String name = assignment.getName();
-        checks.add(new Check("Name", name != null && !name.isBlank(), "Assignment name is blank"));
+        checks.add(new Check("Name", name != null && !name.isBlank(), "Assignment name is blank", Fix.EDIT_NAME));
         Double points = assignment.getPoints();
-        checks.add(new Check("Points", points != null && points > 0, "Points must be greater than 0 (got " + points + ")"));
+        checks.add(new Check("Points", points != null && points > 0, "Points must be greater than 0 (got " + points + ")",
+                Fix.EDIT_POINTS));
         String due = assignment.getDueDate();
         checks.add(new Check("Due date", due != null && DUE_DATE.matcher(due.trim()).matches(),
-                "Due date must be MM/DD/YYYY (got " + due + ")"));
+                "Due date must be MM/DD/YYYY (got " + due + ")", Fix.EDIT_DUE_DATE));
         String type = assignment.getAssignmentType();
         checks.add(new Check("Submission type",
                 type != null && SUBMISSION_TYPES.contains(type.trim().toLowerCase(java.util.Locale.ROOT)),
-                "Submission type must be one of " + SUBMISSION_TYPES + " (got " + type + ")"));
+                "Submission type must be one of " + SUBMISSION_TYPES + " (got " + type + ")", Fix.EDIT_SUBMISSION_TYPE));
         String contentUrl = assignment.getContentUrl();
         checks.add(new Check("Content URL", contentUrl != null && !contentUrl.isBlank(),
-                "No content URL, so the frontend page can't find this assignment"));
+                "No content URL, so the frontend page can't find this assignment", Fix.EDIT_CONTENT_URL));
         checks.add(new Check("AI rubric", isAiRubricReady(assignment.getAiRubric(), points),
-                "AI rubric is missing or not on this assignment's points scale; grading falls back to the default rubric"));
+                "AI rubric is missing or not on this assignment's points scale; grading falls back to the default rubric",
+                Fix.REGENERATE_RUBRIC));
         double max = maxScore(points);
         long overPoints = submissions.stream()
                 .filter(s -> s.getGrade() != null && s.getGrade() > max + 0.000001).count();
-        checks.add(new Check("Grades in range", overPoints == 0, overPoints + " submission(s) graded above the points"));
+        checks.add(new Check("Grades in range", overPoints == 0, overPoints + " submission(s) graded above the points",
+                Fix.REGRADE_OUT_OF_RANGE));
         long queued = submissions.stream().filter(s -> Boolean.TRUE.equals(s.getNeedsAiRegrade())).count();
-        checks.add(new Check("AI queue", queued == 0, queued + " submission(s) still waiting for an AI grade"));
+        checks.add(new Check("AI queue", queued == 0, queued + " submission(s) still waiting for an AI grade", Fix.NONE));
         return checks;
     }
 

@@ -258,6 +258,17 @@ public class AssignmentsApiController {
         if (request.assignmentType != null && !request.assignmentType.isBlank()) {
             assignment.setAssignmentType(request.assignmentType.trim());
         }
+        // Optional, so an omitted URL never clears it. Canonical like auto-create, and unique, since
+        // auto-create finds the assignment by this URL.
+        if (request.contentUrl != null && !request.contentUrl.isBlank()) {
+            String canonicalUrl = AssignmentContentUrls.canonicalize(request.contentUrl);
+            Assignment existing = canonicalUrl == null ? null : assignmentRepo.findFirstByContentUrlOrderByIdAsc(canonicalUrl);
+            if (canonicalUrl == null || (existing != null && !existing.getId().equals(id))) {
+                return ResponseEntity.badRequest().body(Map.of("error", canonicalUrl == null
+                        ? "Content URL is not a page URL" : "Another assignment (#" + existing.getId() + ") already uses that content URL"));
+            }
+            assignment.setContentUrl(canonicalUrl);
+        }
         return ResponseEntity.ok(new AssignmentDto(assignmentRepo.save(assignment)));
     }
 
@@ -270,6 +281,7 @@ public class AssignmentsApiController {
         public Double points;
         public String dueDate;
         public String assignmentType;
+        public String contentUrl;
     }
 
     /**

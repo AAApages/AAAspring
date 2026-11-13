@@ -3,9 +3,19 @@
 (function () {
   const { esc, api, postJson, formatEta, formatGrade, debounce, toast, contentText, submissionDetailHtml,
     gradingOutcomeText, saveManualGrade, clearManualGrade, requestAiGrade, gradeSourceBadge, closeAssignment,
-    reviews, REVIEW_REASONS, REVIEW_DECISIONS, SIMILARITY_BASIS } = window.Grading;
+    reviews, REVIEW_REASONS, REVIEW_DECISIONS, SIMILARITY_BASIS,
+    linkify, progressHtml, loadingHtml, busy, showHistory } = window.Grading;
   const SUBMISSION_TYPES = ['text', 'link', 'github_issue', 'code', 'file'];
   const $ = id => document.getElementById(id);
+
+  // contentUrl is stored as a page path ("csa/lesson"); the lesson itself lives on the Pages site.
+  const PAGES_BASE = /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+    ? 'http://localhost:4500' : 'https://pages.opencodingsociety.com';
+  function pageLink(contentUrl) {
+    if (!contentUrl) return '';
+    const href = /^https?:\/\//.test(contentUrl) ? contentUrl : `${PAGES_BASE}/${contentUrl.replace(/^\/+/, '')}`;
+    return `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(contentUrl)}</a>`;
+  }
 
   let assignments = [];
   let current = null;          // assignment shown in the window
@@ -83,22 +93,59 @@
 
   // ---------- assignment window ----------
   function openModal(id) { $(id).classList.add('open'); }
-  function closeModal(el) { el.classList.remove('open'); }
+  function closeModal(el) {
+    if (!el.classList.contains('open')) return;
+    el.classList.remove('open');
+    if (el.id === 'assignmentModal') syncUrl();
+  }
 
-  function openAssignment(id) {
+  function openAssignment(id, tab = 'submissions') {
     current = assignments.find(a => a.id === id);
-    if (!current) return;
+    if (!current) return false;
+    closeModal($('testModal'));
     renderHeader();
-    showTab('submissions');
     openModal('assignmentModal');
+    showTab(tab);
+    return true;
+  }
+
+  // ---------- deep links: /mvc/assignments/tracker?assignment=12&tab=edit ----------
+  function syncUrl() {
+    const url = new URL(location.href);
+    if (current && $('assignmentModal').classList.contains('open')) {
+      url.searchParams.set('assignment', current.id);
+      const tab = document.querySelector('#assignmentModal .g-tab.active')?.dataset.tab;
+      if (tab && tab !== 'submissions') url.searchParams.set('tab', tab); else url.searchParams.delete('tab');
+    } else {
+      url.searchParams.delete('assignment');
+      url.searchParams.delete('tab');
+    }
+    history.replaceState(null, '', url);
+  }
+
+  function openFromUrl() {
+    const params = new URLSearchParams(location.search);
+    const id = Number(params.get('assignment'));
+    if (!id) return;
+    const tab = ['submissions', 'edit', 'rubric', 'more'].includes(params.get('tab')) ? params.get('tab') : 'submissions';
+    if (!openAssignment(id, tab)) toast(`Assignment #${id} was not found`, false);
   }
 
   function renderHeader() {
     const a = current;
+    const closed = !!a.closedAt;
     $('amTitle').textContent = a.name;
-    $('amSubtitle').textContent = `#${a.id}${a.contentUrl ? ' · ' + a.contentUrl : ''}`
-      + (a.closedAt ? ` · Closed ${new Date(a.closedAt).toLocaleString()}: grades are final` : ' · Open');
-    $('closeAssignment').disabled = !!a.closedAt;
+    $('amSubtitle').innerHTML = `#${a.id}${a.contentUrl ? ' · ' + pageLink(a.contentUrl) : ''} · `
+      + (closed ? `<span class="g-badge ok">Closed</span> ${esc(new Date(a.closedAt).toLocaleString())}: grades are final`
+        : '<span class="g-badge warn">Open</span> grading in progress');
+    $('closeAssignment').disabled = closed;
+    // Closed is final: nothing that changes grading inputs stays available.
+    $('regenRubric').disabled = closed;
+    $('saveRubric').disabled = closed;
+    $('randomizeGraders').disabled = closed;
+    $('editForm').querySelectorAll('input, select, textarea, button').forEach(el => { el.disabled = closed; });
+    $('editClosedNote').style.display = closed ? '' : 'none';
+    $('rubricClosedNote').style.display = closed ? '' : 'none';
     $('closeStatus').textContent = a.closedAt
       ? 'Closed. Grade changes now go through a teacher review on each submission.'
       : 'Closing makes every grade final and copies it to the gradebook. It cannot be undone.';
@@ -120,8 +167,9 @@
       ['Created', esc(a.timestamp)],
       ['Courses', esc((a.courseCodes || []).join(', '))],
       ['Hack weights', esc(hacks)],
+      ['Lesson page', pageLink(a.contentUrl)],
       ['Resource', resource],
-      ['Description', esc(a.description)],
+      ['Description', linkify(a.description || '')],
     ].filter(([, v]) => v).map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('');
     $('amRubric').textContent = a.aiRubric || '(no rubric)';
     $('amRubricBadge').innerHTML = a.rubricReady ? '<span class="g-badge ok">AI-generated</span>'
@@ -135,13 +183,17 @@
     if (tab === 'edit') fillEditForm();
     if (tab === 'rubric') { $('rubricText').value = current.aiRubric || ''; $('rubricStatus').textContent = ''; }
     if (tab === 'more') showMore('checks');
+    syncUrl();
   }
 
   // ---------- submissions tab ----------
-  async function loadSubmissions() {
-    $('subDetail').style.display = 'none';
-    $('subList').style.display = '';
-    $('subRows').innerHTML = '<tr><td colspan="4" class="g-empty">Loading…</td></tr>';
+  /** Reloads the submissions; keepDetail leaves an open submission on screen (after a restore). */
+  async function loadSubmissions(keepDetail = false) {
+    if (!keepDetail) {
+      $('subDetail').style.display = 'none';
+      $('subList').style.display = '';
+      $('subRows').innerHTML = loadingHtml('Loading submissions…', 4);
+    }
     try {
       const [subs, queue, open] = await Promise.all([
         api(`/api/submissions/assignment/${current.id}`),
@@ -194,17 +246,24 @@
     }).join('');
   }
 
+  // A submission opens on its revision dropdown: the latest version first, older ones to pick,
+  // compare and restore (see Grading.showHistory).
   function showSubmission(id) {
     const s = submissions.find(x => x.id === id);
     if (!s) return;
-    $('subDetailBody').innerHTML = submissionDetailHtml(s, submitterName(s), current.points);
     $('subList').style.display = 'none';
     $('subDetail').style.display = '';
+    showHistory($('subDetailBody'), id, {
+      submitter: submitterName(s),
+      points: current.points,
+      onRestored: async () => { await loadSubmissions(true); refreshCurrent(); },
+    });
   }
 
   async function gradeRow(row, action, button) {
     const id = Number(row.dataset.id);
     const revision = submissions.find(s => s.id === id)?.grading?.revision;
+    const restore = action === 'ai' ? busy(button, 'Grading…') : null;
     button.disabled = true;
     try {
       let result;
@@ -215,7 +274,6 @@
       } else if (action === 'clear') {
         result = await clearManualGrade(id, revision);
       } else {
-        button.textContent = 'Grading…';
         result = await requestAiGrade(id);
       }
       const aiGrade = result.grading?.aiGrade;
@@ -225,8 +283,7 @@
       refreshCurrent();
     } catch (e) {
       toast(e.message, false);
-      button.disabled = false;
-      if (action === 'ai') button.textContent = 'AI grade';
+      if (restore) restore(); else button.disabled = false;
     }
   }
 
@@ -245,16 +302,17 @@
     const a = current;
     const pending = a.pendingAiCount ? ` ${a.pendingAiCount} submission(s) are still waiting for AI grading and will be finalized as they are.` : '';
     if (!confirm(`Close "${a.name}"? Every grade becomes final and is copied to the gradebook.${pending} This cannot be undone.`)) return;
-    $('closeAssignment').disabled = true;
+    const restore = busy($('closeAssignment'), 'Closing…');
     try {
       const result = await closeAssignment(a.id);
       const s = result.summary;
       toast(`${gradingOutcomeText(result.outcome)} ${s.graded} graded, ${s.ungraded} ungraded, ${s.transferred} gradebook grade(s) written.`);
+      restore();
       await refreshCurrent();
       await loadSubmissions();
     } catch (e) {
       toast(e.message, false);
-      $('closeAssignment').disabled = false;
+      restore();
     }
   }
 
@@ -319,8 +377,8 @@
     return parts.join('');
   }
 
-  async function reviewAction(button, action) {
-    button.disabled = true;
+  async function reviewAction(button, action, label) {
+    const restore = busy(button, label);
     try {
       const result = await action();
       toast(gradingOutcomeText(result.outcome, result.detail));
@@ -329,7 +387,7 @@
     } catch (e) {
       toast(e.message, false);
     } finally {
-      button.disabled = false;
+      restore();
     }
   }
 
@@ -360,6 +418,7 @@
     $('editPoints').value = a.points ?? '';
     $('editDue').value = toIsoDate(a.dueDate);
     $('editDescription').value = a.description || '';
+    $('editContentUrl').value = a.contentUrl || '';
     const types = [...new Set([...SUBMISSION_TYPES, (a.assignmentType || '').toLowerCase()].filter(Boolean))];
     $('editSubmissionType').innerHTML = types.map(t =>
       `<option value="${esc(t)}" ${t === (a.assignmentType || '').toLowerCase() ? 'selected' : ''}>${esc(t)}</option>`).join('');
@@ -375,6 +434,7 @@
       dueDate: fromIsoDate($('editDue').value),
       assignmentType: $('editSubmissionType').value,
       description: $('editDescription').value.trim(),
+      contentUrl: $('editContentUrl').value.trim(),
     };
     $('editStatus').textContent = 'Saving…';
     try {
@@ -407,9 +467,8 @@
   }
 
   async function regenerateRubric() {
-    const button = $('regenRubric');
-    button.disabled = true;
-    $('rubricStatus').textContent = 'Generating… this takes about 10-20 seconds.';
+    const restore = busy($('regenRubric'), 'Generating…');
+    $('rubricStatus').textContent = 'This takes about 10-20 seconds.';
     try {
       const result = await api(`/api/assignments/${current.id}/ai-rubric/regenerate`, { method: 'POST' });
       $('rubricText').value = result.aiRubric;
@@ -418,7 +477,8 @@
     } catch (e) {
       $('rubricStatus').textContent = e.message;
     } finally {
-      button.disabled = false;
+      restore();
+      if (current?.closedAt) $('regenRubric').disabled = true;
     }
   }
 
@@ -430,17 +490,99 @@
     if (panel === 'frontmatter') loadFrontmatter();
   }
 
+  // ---------- checks and their fixes (AssignmentRubricService.Fix) ----------
+  const FIX_FIELDS = {
+    EDIT_NAME: 'editName', EDIT_POINTS: 'editPoints', EDIT_DUE_DATE: 'editDue',
+    EDIT_SUBMISSION_TYPE: 'editSubmissionType', EDIT_CONTENT_URL: 'editContentUrl',
+  };
+
+  function fixButton(assignmentId, check) {
+    if (check.ok) return '';
+    if (check.fix === 'NONE') return '<a class="g-btn" href="/mvc/synergy/ai-queue">Open AI queue</a>';
+    const label = check.fix === 'REGENERATE_RUBRIC' ? 'Regenerate rubric'
+      : check.fix === 'REGRADE_OUT_OF_RANGE' ? 'Re-grade' : 'Fix';
+    return `<button class="g-btn" type="button" data-fix="${esc(check.fix)}" data-assignment="${assignmentId}">${label}</button>`;
+  }
+
+  function checkRowsHtml(assignmentId, checks) {
+    return `<table class="g-details"><tbody>${checks.map(c => `<tr>
+      <th>${c.ok ? '<span class="g-badge ok">OK</span>' : '<span class="g-badge bad">Problem</span>'} ${esc(c.check)}</th>
+      <td>${c.ok ? '' : linkify(c.message)}</td>
+      <td class="text-end">${fixButton(assignmentId, c)}</td></tr>`).join('')}</tbody></table>`;
+  }
+
   async function renderChecks(target, id) {
-    target.innerHTML = '<div class="g-sub">Running checks…</div>';
+    target.innerHTML = loadingHtml('Running checks…');
     try {
       const checks = await api(`/api/assignments/${id}/checks`);
       const failed = checks.filter(c => !c.ok).length;
-      target.innerHTML = `<div class="mb-2">${failed ? `<span class="g-badge bad">${failed} problem(s)</span>` : '<span class="g-badge ok">All checks passed</span>'}</div>
-        <table class="g-details"><tbody>${checks.map(c => `<tr>
-          <th>${c.ok ? '<span class="g-badge ok">OK</span>' : '<span class="g-badge bad">Fix</span>'} ${esc(c.check)}</th>
-          <td>${c.ok ? '' : esc(c.message)}</td></tr>`).join('')}</tbody></table>`;
+      const a = assignments.find(x => x.id === Number(id));
+      const open = target === $('checkResults') && a
+        ? ` <button class="g-btn" type="button" data-open-assignment="${a.id}">Open ${esc(a.name)}</button>` : '';
+      target.innerHTML = `<div class="mb-2">${failed ? `<span class="g-badge bad">${failed} problem(s)</span>` : '<span class="g-badge ok">All checks passed</span>'}${open}</div>
+        ${checkRowsHtml(id, checks)}`;
+      target.dataset.checked = id;
     } catch (e) {
       target.innerHTML = `<div class="g-sub">${esc(e.message)}</div>`;
+    }
+  }
+
+  /** Re-runs whatever check view the fix came from, so the problem disappears once fixed. */
+  function rerunChecks(fromEl) {
+    const results = fromEl.closest('#checkResults, #moreChecks');
+    if (!results) return;
+    if (results.id === 'checkResults' && results.dataset.all) checkAll();
+    else if (results.dataset.checked) renderChecks(results, results.dataset.checked);
+  }
+
+  async function regradeOutOfRange(button) {
+    const status = document.createElement('div');
+    button.after(status);
+    const restore = busy(button, 'Re-grading…');
+    try {
+      let state = await api('/api/submissions/fix-out-of-range-grades', { method: 'POST' });
+      while (state.running) {
+        status.innerHTML = progressHtml(`Re-graded ${state.done} of ${state.total}`, state.done, state.total);
+        await new Promise(r => setTimeout(r, 2000));
+        state = await api('/api/submissions/fix-out-of-range-grades');
+      }
+      toast(`Re-graded ${state.fixed} submission(s)${state.failed ? `, ${state.failed} failed` : ''}`, !state.failed);
+    } catch (e) {
+      toast(e.message, false);
+    } finally {
+      restore();
+      status.remove();
+    }
+  }
+
+  async function applyFix(button) {
+    const id = Number(button.dataset.assignment);
+    const fix = button.dataset.fix;
+    if (FIX_FIELDS[fix]) {
+      if (!openAssignment(id, 'edit')) return;
+      const field = $(FIX_FIELDS[fix]);
+      field.focus();
+      field.classList.add('is-invalid');
+      field.addEventListener('input', () => field.classList.remove('is-invalid'), { once: true });
+      return;
+    }
+    if (fix === 'REGENERATE_RUBRIC') {
+      const restore = busy(button, 'Generating…');
+      try {
+        await api(`/api/assignments/${id}/ai-rubric/regenerate`, { method: 'POST' });
+        toast('New AI rubric saved');
+        await refreshCurrent();
+        rerunChecks(button);
+      } catch (e) {
+        toast(e.message, false);
+        restore();
+      }
+      return;
+    }
+    if (fix === 'REGRADE_OUT_OF_RANGE') {
+      await regradeOutOfRange(button);
+      await refreshCurrent();
+      rerunChecks(button);
     }
   }
 
@@ -553,45 +695,56 @@
   }
 
   async function createTest() {
-    $('createTestStatus').textContent = 'Creating…';
+    const restore = busy($('createTest'), 'Creating…');
+    $('createTestStatus').textContent = '';
     try {
       const created = await api('/api/assignments/test', { method: 'POST' });
-      $('createTestStatus').textContent = `Created "${created.name}" (#${created.id}). Its AI rubric generates in the background.`;
       await loadAssignments();
       $('checkSelect').value = String(created.id);
+      $('createTestStatus').innerHTML = `Created <button class="g-btn" type="button" data-open-assignment="${created.id}">${esc(created.name)} (#${created.id})</button>
+        Its AI rubric generates in the background.`;
     } catch (e) {
       $('createTestStatus').textContent = e.message;
+    } finally {
+      restore();
     }
   }
 
   async function checkAll() {
     const target = $('checkResults');
     const button = $('runAllChecks');
-    button.disabled = true;
+    if (button.disabled) return;
+    const restore = busy(button, 'Checking…');
+    target.dataset.all = 'true';
+    delete target.dataset.checked;
     const problems = [];
     let done = 0;
+    const total = assignments.length;
     const queue = [...assignments];
+    target.innerHTML = progressHtml(`Checked 0 of ${total}`, 0, total);
     async function worker() {
       while (queue.length) {
         const a = queue.shift();
         try {
           const checks = await api(`/api/assignments/${a.id}/checks`);
-          const failed = checks.filter(c => !c.ok);
-          if (failed.length) problems.push({ a, failed });
+          if (checks.some(c => !c.ok)) problems.push({ a, checks });
         } catch (e) {
-          problems.push({ a, failed: [{ check: 'Request', message: e.message }] });
+          problems.push({ a, checks: [{ check: 'Request', ok: false, message: e.message, fix: null }] });
         }
-        target.innerHTML = `<div class="g-sub">Checked ${++done} of ${assignments.length}…</div>`;
+        done++;
+        target.innerHTML = progressHtml(`Checked ${done} of ${total}`, done, total);
       }
     }
     await Promise.all([1, 2, 3, 4].map(worker));
-    button.disabled = false;
+    restore();
     problems.sort((x, y) => (x.a.name || '').localeCompare(y.a.name || ''));
+    // Each assignment links to its window; each problem has its Fix button.
     target.innerHTML = problems.length
       ? `<div class="mb-2"><span class="g-badge bad">${problems.length} assignment(s) with problems</span></div>
-         <div style="max-height:320px;overflow:auto">${problems.map(p => `<div class="g-panel">
-           <b>${esc(p.a.name)}</b> <span class="g-sub">#${p.a.id}</span>
-           <ul class="mb-0">${p.failed.map(c => `<li>${esc(c.check)}: ${esc(c.message)}</li>`).join('')}</ul></div>`).join('')}</div>`
+         <div style="max-height:360px;overflow:auto">${problems.map(p => `<div class="g-panel">
+           <a href="?assignment=${p.a.id}" data-open-assignment="${p.a.id}"><b>${esc(p.a.name)}</b></a> <span class="g-sub">#${p.a.id}</span>
+           ${p.a.contentUrl ? `<div class="g-sub mb-1">${pageLink(p.a.contentUrl)}</div>` : ''}
+           ${checkRowsHtml(p.a.id, p.checks.filter(c => !c.ok))}</div>`).join('')}</div>`
       : '<span class="g-badge ok">Every assignment passed</span>';
   }
 
@@ -674,12 +827,10 @@
   });
   $('reviewSaveEvidence').addEventListener('click', e =>
     reviewAction(e.currentTarget, () => reviews.saveEvidence(openReviewId, $('reviewEvidence').value)));
-  $('reviewAiEvaluate').addEventListener('click', e => {
-    e.currentTarget.textContent = 'Evaluating…';
-    const button = e.currentTarget;
-    reviewAction(button, () => reviews.aiEvaluation(openReviewId)).finally(() => { button.textContent = 'AI re-evaluation'; });
-  });
-  $('reviewSimilarity').addEventListener('click', e => reviewAction(e.currentTarget, () => reviews.similarity(openReviewId)));
+  $('reviewAiEvaluate').addEventListener('click', e =>
+    reviewAction(e.currentTarget, () => reviews.aiEvaluation(openReviewId), 'Evaluating…'));
+  $('reviewSimilarity').addEventListener('click', e =>
+    reviewAction(e.currentTarget, () => reviews.similarity(openReviewId), 'Searching…'));
   document.querySelectorAll('input[name="reviewDecision"]').forEach(radio => radio.addEventListener('change', () => {
     $('reviewAdjustFields').style.display = radio.value === 'ADJUST' && radio.checked ? '' : 'none';
   }));
@@ -688,8 +839,23 @@
   $('exportAll').addEventListener('click', () => downloadCsv('assignments.csv', assignmentCsvRows(assignments)));
   $('openTestTools').addEventListener('click', () => openModal('testModal'));
   $('createTest').addEventListener('click', createTest);
-  $('runCheck').addEventListener('click', () => { if ($('checkSelect').value) renderChecks($('checkResults'), $('checkSelect').value); });
+  $('runCheck').addEventListener('click', () => {
+    if (!$('checkSelect').value) return;
+    delete $('checkResults').dataset.all;
+    renderChecks($('checkResults'), $('checkSelect').value);
+  });
   $('runAllChecks').addEventListener('click', checkAll);
 
-  loadAssignments();
+  // Fix buttons and assignment links in check results, test tools and anywhere else.
+  document.addEventListener('click', e => {
+    const fix = e.target.closest('button[data-fix]');
+    if (fix) { applyFix(fix); return; }
+    const open = e.target.closest('[data-open-assignment]');
+    if (open) {
+      e.preventDefault();
+      openAssignment(Number(open.dataset.openAssignment));
+    }
+  });
+
+  loadAssignments().then(openFromUrl);
 })();

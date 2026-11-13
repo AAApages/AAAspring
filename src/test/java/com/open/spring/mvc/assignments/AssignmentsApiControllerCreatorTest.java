@@ -489,6 +489,32 @@ class AssignmentsApiControllerCreatorTest {
                 "AI rubric", "Grades in range", "AI queue")), failed.toString());
         }
 
+        @Test
+        void everyFailedCheckSaysHowToFixIt() {
+            Assignment broken = assignment(7L, " ");
+            broken.setPoints(0.0);
+            broken.setDueDate(null);
+            broken.setAssignmentType("essay");
+            broken.setContentUrl(null);
+            AssignmentSubmission overGraded = AssignmentCreatorFixtures.submission(1L, broken);
+            overGraded.setGrade(4.0);
+            overGraded.setNeedsAiRegrade(true);
+
+            java.util.Map<String, AssignmentRubricService.Fix> fixes = AssignmentRubricService.runChecks(broken, List.of(overGraded))
+                .stream().filter(check -> !check.ok())
+                .collect(java.util.stream.Collectors.toMap(AssignmentRubricService.Check::check, AssignmentRubricService.Check::fix));
+
+            assertEquals(java.util.Map.of(
+                "Name", AssignmentRubricService.Fix.EDIT_NAME,
+                "Points", AssignmentRubricService.Fix.EDIT_POINTS,
+                "Due date", AssignmentRubricService.Fix.EDIT_DUE_DATE,
+                "Submission type", AssignmentRubricService.Fix.EDIT_SUBMISSION_TYPE,
+                "Content URL", AssignmentRubricService.Fix.EDIT_CONTENT_URL,
+                "AI rubric", AssignmentRubricService.Fix.REGENERATE_RUBRIC,
+                "Grades in range", AssignmentRubricService.Fix.REGRADE_OUT_OF_RANGE,
+                "AI queue", AssignmentRubricService.Fix.NONE), fixes);
+        }
+
         private void assertForbidden(org.junit.jupiter.api.function.Executable call) {
             org.springframework.web.server.ResponseStatusException e =
                 org.junit.jupiter.api.Assertions.assertThrows(org.springframework.web.server.ResponseStatusException.class, call);

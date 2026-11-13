@@ -34,7 +34,7 @@
                     <th th:if="${isStaff}">Skip queue</th>
                 </tr>
             </thead>
-            <tbody id="queueRows"><tr><td th:colspan="${isStaff} ? 5 : 3" class="g-empty">Loading…</td></tr></tbody>
+            <tbody id="queueRows"><tr><td th:colspan="${isStaff} ? 5 : 3" ><div class="g-loading"><div class="g-progress busy"><span></span></div><div class="g-progress-label">Loading queue…</div></div></td></tr></tbody>
         </table>
     </div>
     <div class="g-sub mt-2">The countdown is live; the list refreshes every 30 seconds. Estimates use the grader's recent speed and the AI key's rate limit.</div>
