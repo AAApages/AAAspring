@@ -75,11 +75,40 @@ class PushNotificationServiceTest {
     }
 
     @Test
-    void aPhoneSignedInAsSomeoneElseMovesToThem() {
+    void aPhoneSignedInAsSomeoneElseMovesToThemWithItsOwnKeys() {
         stored = row(person(1), Instant.now());
         updatedRows = 1;
 
-        service().saveSubscription(person(2), ENDPOINT, "key", "secret", "ua");
+        assertTrue(service().saveSubscription(person(2), ENDPOINT, "key", "secret", "ua"));
+
+        assertEquals(List.of("findByEndpoint", "updateByEndpoint"), calls);
+    }
+
+    @Test
+    void knowingSomeoneElsesEndpointIsNotEnoughToTakeItOver() {
+        stored = row(person(1), Instant.now());
+
+        assertFalse(service().saveSubscription(person(2), ENDPOINT, "attacker-key", "attacker-secret", "ua"));
+
+        assertEquals(List.of("findByEndpoint"), calls);
+    }
+
+    @Test
+    void theOwnerMayRotateKeys() {
+        stored = row(person(1), Instant.now());
+        updatedRows = 1;
+
+        assertTrue(service().saveSubscription(person(1), ENDPOINT, "new-key", "new-secret", "ua"));
+
+        assertEquals(List.of("findByEndpoint", "updateByEndpoint"), calls);
+    }
+
+    @Test
+    void aRowThatChangedHandsMeanwhileIsNotOverwritten() {
+        stored = row(person(1), Instant.now().minus(Duration.ofDays(3)));
+        updatedRows = 0; // the conditional UPDATE matched nothing: someone else owns it now
+
+        assertFalse(service().saveSubscription(person(1), ENDPOINT, "key", "secret", "ua"));
 
         assertEquals(List.of("findByEndpoint", "updateByEndpoint"), calls);
     }

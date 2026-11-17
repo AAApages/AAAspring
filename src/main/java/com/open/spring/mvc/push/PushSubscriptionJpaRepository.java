@@ -25,13 +25,18 @@ public interface PushSubscriptionJpaRepository extends JpaRepository<PushSubscri
 
     Optional<PushSubscriptionEntity> findByEndpoint(String endpoint);
 
-    /** Points an existing browser's row at this person and keys; returns the rows changed (0 or 1). */
+    /**
+     * Points an existing browser's row at this person and keys, but only when the row is already
+     * theirs or the caller presents the row's own keys (see PushNotificationService.saveSubscription).
+     * Returns the rows changed (0 or 1).
+     */
     @Modifying
     @Transactional
     @Query("UPDATE PushSubscriptionEntity s SET s.person = :person, s.p256dh = :p256dh, s.auth = :auth, "
-            + "s.userAgent = :userAgent, s.lastUsedAt = :now WHERE s.endpoint = :endpoint")
+            + "s.userAgent = :userAgent, s.lastUsedAt = :now WHERE s.endpoint = :endpoint "
+            + "AND (s.person.id = :personId OR (s.p256dh = :p256dh AND s.auth = :auth))")
     int updateByEndpoint(@Param("endpoint") String endpoint, @Param("person") Person person,
-            @Param("p256dh") String p256dh, @Param("auth") String auth,
+            @Param("personId") Long personId, @Param("p256dh") String p256dh, @Param("auth") String auth,
             @Param("userAgent") String userAgent, @Param("now") Instant now);
 
     @Modifying

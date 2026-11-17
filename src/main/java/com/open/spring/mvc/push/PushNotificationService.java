@@ -112,31 +112,46 @@ public class PushNotificationService {
     }
 
     /**
-     * Saves a browser's subscription for {@code person}. The endpoint is unique per browser,
-     * so re-registering (new keys, or the same phone after signing in as someone else) updates
-     * the row in place instead of adding a second one.
+     * Saves a browser's subscription for {@code person}; returns false when it was refused.
+     * The endpoint is unique per browser, so re-registering updates the row in place instead
+     * of adding a second one.
+     *
+     * Who may take over an existing endpoint: its owner (the browser rotated its keys), or
+     * another account presenting the very same keys, which only that browser holds (a shared
+     * phone now signed in as someone else, whose messages should then go to them). Knowing an
+     * endpoint URL alone is not enough to move someone else's phone to your account.
      *
      * The page re-sends its subscription regularly, so an unchanged one seen within the last
      * day is not written at all, and every write is a single statement (see the repository):
      * this must not add write traffic to a SQLite database that already contends for its lock.
      * Not transactional on purpose, for the same reason.
      */
-    public void saveSubscription(Person person, String endpoint, String p256dh, String auth, String userAgent) {
+    public boolean saveSubscription(Person person, String endpoint, String p256dh, String auth, String userAgent) {
         Instant now = Instant.now();
         PushSubscriptionEntity existing = subscriptionRepository.findByEndpoint(endpoint).orElse(null);
-        if (existing != null && existing.getPerson() != null && existing.getPerson().getId().equals(person.getId())
-                && p256dh.equals(existing.getP256dh()) && auth.equals(existing.getAuth())
-                && existing.getLastUsedAt() != null && existing.getLastUsedAt().isAfter(now.minus(RESEEN_AFTER))) {
-            return;
+        if (existing != null) {
+            boolean sameOwner = existing.getPerson() != null && existing.getPerson().getId().equals(person.getId());
+            boolean sameKeys = p256dh.equals(existing.getP256dh()) && auth.equals(existing.getAuth());
+            if (!sameOwner && !sameKeys) {
+                return false;
+            }
+            if (sameOwner && sameKeys && existing.getLastUsedAt() != null
+                    && existing.getLastUsedAt().isAfter(now.minus(RESEEN_AFTER))) {
+                return true;
+            }
         }
-        if (subscriptionRepository.updateByEndpoint(endpoint, person, p256dh, auth, userAgent, now) > 0) {
-            return;
+        if (subscriptionRepository.updateByEndpoint(endpoint, person, person.getId(), p256dh, auth, userAgent, now) > 0) {
+            return true;
+        }
+        if (existing != null) {
+            return false; // it changed hands between the read and the update, and not to us
         }
         try {
             subscriptionRepository.save(new PushSubscriptionEntity(person, endpoint, p256dh, auth, userAgent));
+            return true;
         } catch (DataIntegrityViolationException raced) {
             // The same browser registered twice at once; the other insert won, so update that row.
-            subscriptionRepository.updateByEndpoint(endpoint, person, p256dh, auth, userAgent, now);
+            return subscriptionRepository.updateByEndpoint(endpoint, person, person.getId(), p256dh, auth, userAgent, now) > 0;
         }
     }
 

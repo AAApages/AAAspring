@@ -108,8 +108,12 @@ public class PushApiRestController {
                     HttpStatus.BAD_REQUEST);
         }
         String agent = userAgent == null ? null : userAgent.substring(0, Math.min(userAgent.length(), 255));
-        pushNotificationService.saveSubscription(person, request.getEndpoint().trim(),
+        boolean saved = pushNotificationService.saveSubscription(person, request.getEndpoint().trim(),
                 request.getKeys().getP256dh().trim(), request.getKeys().getAuth().trim(), agent);
+        if (!saved) {
+            return new ResponseEntity<>(Map.of("error", "This browser is registered to another account"),
+                    HttpStatus.CONFLICT);
+        }
         return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 
