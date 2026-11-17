@@ -213,6 +213,12 @@ AWS_SECRET_ACCESS_KEY=local-secret-key-change-me
 AWS_REGION=us-east-2
 # if developing locally, set the endoint heree
 # AWS_S3_ENDPOINT=http://localhost:9000
+
+# Web Push (optional): phone notifications for direct messages. Without these the
+# "Notify my phone" button on /dm stays hidden. Generate: python3 scripts/push_vapid_keys.py
+PUSH_VAPID_PUBLIC_KEY=
+PUSH_VAPID_PRIVATE_KEY=
+PUSH_VAPID_SUBJECT=mailto:admin@opencodingsociety.com
 ```
 
 ### Personal AI keys and grading

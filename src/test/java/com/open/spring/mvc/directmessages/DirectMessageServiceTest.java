@@ -17,6 +17,10 @@ import java.util.NoSuchElementException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.open.spring.mvc.push.PushNotificationService;
+import com.open.spring.mvc.push.PushSubscriptionJpaRepository;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.open.spring.mvc.person.Person;
@@ -133,8 +137,14 @@ class DirectMessageServiceTest {
         );
 
         // A real SimpMessagingTemplate over a no-op channel, so postMessage can broadcast.
+        // Push is unconfigured here (no VAPID keys), so notifyPerson is a no-op.
+        PushNotificationService pushNotificationService = new PushNotificationService(
+                repositoryStub(PushSubscriptionJpaRepository.class, (methodName, arguments) -> {
+                    throw new UnsupportedOperationException(methodName);
+                }),
+                new ObjectMapper(), "", "", "");
         service = new DirectMessageService(conversationRepository, messageRepository, readStateRepository,
-                new SimpMessagingTemplate((message, timeout) -> true));
+                new SimpMessagingTemplate((message, timeout) -> true), pushNotificationService);
     }
 
     @Test
