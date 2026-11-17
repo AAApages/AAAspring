@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.open.spring.mvc.person.Person;
@@ -96,6 +97,31 @@ public class DirectMessageApiController {
                 "count", summary.people().size(),
                 "people", summary.people(),
                 "conversations", summary.unreadByConversation()), HttpStatus.OK);
+    }
+
+    /**
+     * Searches the caller's own conversations: {@code GET /api/dm/search?q=term}. Returns the
+     * matching messages newest first, each with its conversation id and a plain-text excerpt.
+     * Only conversations the caller is a participant of are searched; add
+     * {@code &conversationId=<id>} to search just one of them.
+     */
+    @GetMapping("/search")
+    @Transactional(readOnly = true)
+    public ResponseEntity<Object> searchMessages(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @RequestParam(name = "q", required = false) String query,
+            @RequestParam(name = "conversationId", required = false) Long conversationId) {
+        Person person = currentPerson(userDetails);
+        if (person == null) {
+            return new ResponseEntity<>(Map.of("error", "User not authenticated"), HttpStatus.UNAUTHORIZED);
+        }
+
+        try {
+            return new ResponseEntity<>(
+                    directMessageService.searchMessages(person, query, conversationId), HttpStatus.OK);
+        } catch (IllegalArgumentException ex) {
+            return new ResponseEntity<>(Map.of("error", ex.getMessage()), HttpStatus.BAD_REQUEST);
+        }
     }
 
     @PostMapping("/conversations")

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -69,6 +70,30 @@ class DirectMessageServiceTest {
             DirectMessageJpaRepository.class,
             (methodName, arguments) -> switch (methodName) {
                 case "countUnreadBySender" -> unreadRows;
+                // Stands in for the query's access check and ordering; the LIKE itself is
+                // left out, so the service's own plain-text check is what these tests see.
+                case "findSearchCandidates" -> {
+                    Person target = (Person) arguments[0];
+                    List<DirectMessage> found = new ArrayList<>(savedMessages.stream()
+                        .filter(message -> !message.isDeleted())
+                        .filter(message -> message.getConversation().getParticipants().stream()
+                            .anyMatch(p -> p.getId().equals(target.getId())))
+                        .toList());
+                    Collections.reverse(found);
+                    yield found;
+                }
+                case "findSearchCandidatesInConversation" -> {
+                    Person target = (Person) arguments[0];
+                    Long conversationId = (Long) arguments[1];
+                    List<DirectMessage> found = new ArrayList<>(savedMessages.stream()
+                        .filter(message -> !message.isDeleted())
+                        .filter(message -> conversationId.equals(message.getConversation().getId()))
+                        .filter(message -> message.getConversation().getParticipants().stream()
+                            .anyMatch(p -> p.getId().equals(target.getId())))
+                        .toList());
+                    Collections.reverse(found);
+                    yield found;
+                }
                 case "findTopByConversationOrderByIdDesc" -> savedMessages.stream()
                     .filter(message -> message.getConversation() == arguments[0])
                     .reduce((first, second) -> second);
@@ -251,6 +276,80 @@ class DirectMessageServiceTest {
 
         assertThrows(IllegalStateException.class,
             () -> service.editMessage(conversation, alice, posted.getId(), "too late"));
+    }
+
+    @Test
+    void searchFindsTextInTheCallersConversationsNewestFirst() {
+        DirectMessageConversation withBob = service.getOrCreateConversation(alice, List.of(bob));
+        DirectMessageConversation withCarol = service.getOrCreateConversation(alice, List.of(carol));
+        DirectMessageEvent older = service.postMessage(withBob, bob, "The Sprint review is on Friday");
+        service.postMessage(withBob, alice, "ok thanks");
+        DirectMessageEvent newer = service.postMessage(withCarol, alice, "did you finish the sprint retro?");
+
+        List<DirectMessageService.SearchHit> hits = service.searchMessages(alice, "  SPRINT ");
+
+        assertEquals(List.of(newer.getId(), older.getId()), hits.stream().map(hit -> hit.id()).toList());
+        assertEquals(withCarol.getId(), hits.get(0).conversationId());
+        assertEquals("bob", hits.get(1).senderUid());
+        assertEquals("The Sprint review is on Friday", hits.get(1).excerpt());
+    }
+
+    @Test
+    void searchCanBeLimitedToOneConversation() {
+        DirectMessageConversation withBob = service.getOrCreateConversation(alice, List.of(bob));
+        DirectMessageConversation withCarol = service.getOrCreateConversation(alice, List.of(carol));
+        DirectMessageEvent inBob = service.postMessage(withBob, bob, "The Sprint review is on Friday");
+        service.postMessage(withCarol, alice, "did you finish the sprint retro?");
+
+        List<DirectMessageService.SearchHit> hits = service.searchMessages(alice, "sprint", withBob.getId());
+
+        assertEquals(List.of(inBob.getId()), hits.stream().map(hit -> hit.id()).toList());
+        assertEquals(2, service.searchMessages(alice, "sprint", null).size());
+    }
+
+    @Test
+    void searchLimitedToAConversationTheCallerIsNotInFindsNothing() {
+        DirectMessageConversation conversation = service.getOrCreateConversation(alice, List.of(bob));
+        service.postMessage(conversation, alice, "the secret plan");
+
+        assertTrue(service.searchMessages(carol, "secret", conversation.getId()).isEmpty());
+    }
+
+    @Test
+    void searchMatchesTheTextNotTheHtmlAroundIt() {
+        DirectMessageConversation conversation = service.getOrCreateConversation(alice, List.of(bob));
+        service.postMessage(conversation, bob, "<strong>Lunch</strong> at noon?");
+
+        assertTrue(service.searchMessages(alice, "strong").isEmpty());
+
+        List<DirectMessageService.SearchHit> hits = service.searchMessages(alice, "lunch at");
+        assertEquals(1, hits.size());
+        assertEquals("Lunch at noon?", hits.get(0).excerpt());
+    }
+
+    @Test
+    void searchNeverReturnsAConversationTheCallerIsNotIn() {
+        DirectMessageConversation conversation = service.getOrCreateConversation(alice, List.of(bob));
+        service.postMessage(conversation, alice, "the secret plan");
+
+        assertTrue(service.searchMessages(carol, "secret").isEmpty());
+    }
+
+    @Test
+    void searchSkipsDeletedMessages() {
+        DirectMessageConversation conversation = service.getOrCreateConversation(alice, List.of(bob));
+        DirectMessageEvent posted = service.postMessage(conversation, alice, "delete me later");
+        service.deleteMessage(conversation, alice, posted.getId());
+
+        assertTrue(service.searchMessages(bob, "delete me").isEmpty());
+    }
+
+    @Test
+    void searchRejectsAQueryThatIsTooShortOrTooLong() {
+        assertThrows(IllegalArgumentException.class, () -> service.searchMessages(alice, " a "));
+        assertThrows(IllegalArgumentException.class, () -> service.searchMessages(alice, null));
+        assertThrows(IllegalArgumentException.class,
+            () -> service.searchMessages(alice, "x".repeat(DirectMessageService.MAX_SEARCH_LENGTH + 1)));
     }
 
     private DirectMessageReadState readStateFor(DirectMessageConversation conversation, Person person) {
