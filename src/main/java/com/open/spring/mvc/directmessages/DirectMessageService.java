@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.open.spring.mvc.person.Person;
+import com.open.spring.mvc.push.PushNotificationService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -39,6 +40,7 @@ public class DirectMessageService {
     private final DirectMessageJpaRepository messageRepository;
     private final DirectMessageReadStateJpaRepository readStateRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final PushNotificationService pushNotificationService;
 
     public record UnreadSender(String uid, String name) {
     }
@@ -144,6 +146,18 @@ public class DirectMessageService {
         advanceReadMarker(conversation, sender, message.getId());
 
         messagingTemplate.convertAndSend(DM_TOPIC_PREFIX + conversation.getId(), event);
+
+        // Everyone else in the conversation gets a phone notification once this commits.
+        // The socket topic only reaches tabs that are open; push reaches a locked phone.
+        // Tapping it opens the conversation; one tag per conversation so a burst of
+        // messages collapses into the newest instead of stacking up.
+        String url = "/dm?dm=" + conversation.getId();
+        String tag = "dm-" + conversation.getId();
+        for (Person participant : conversation.getParticipants()) {
+            if (!participant.getId().equals(sender.getId())) {
+                pushNotificationService.notifyPerson(participant, sender.getName(), body, url, tag);
+            }
+        }
         return event;
     }
 
