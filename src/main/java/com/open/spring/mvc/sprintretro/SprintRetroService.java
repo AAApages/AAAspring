@@ -6,14 +6,11 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,16 +36,12 @@ public class SprintRetroService {
     static final int MAX_NAME = 100;
     static final int MAX_TEXT = 2000;
     static final int MAX_COMMENT = 1000;
-    static final int MAX_CHECKS = 300;
 
-    /** Checklist ids: Pages derives them from the checkboxes on each sprint's own page, so only their form is checked. */
-    private static final Pattern CHECK_ID = Pattern.compile("[a-z0-9-]{1,40}");
-
-    /** What the student enters: a rank per item id, text per section or prompt key, and ticked checklist ids. */
+    /** What the student enters: a rank per item id and text per section or prompt key. Older rows may also hold checklist ticks, which are ignored. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record StudentPart(Map<String, Integer> ranks, Map<String, String> text, List<String> checks) {
+    public record StudentPart(Map<String, Integer> ranks, Map<String, String> text) {
         static StudentPart empty() {
-            return new StudentPart(Map.of(), Map.of(), List.of());
+            return new StudentPart(Map.of(), Map.of());
         }
     }
 
@@ -275,7 +268,7 @@ public class SprintRetroService {
 
     // ---------- validation ----------
 
-    /** Checks a student's part and returns it with blanks, zero ranks and duplicate checks removed. */
+    /** Checks a student's part and returns it with blanks and zero ranks removed. */
     static StudentPart validate(StudentPart part) {
         if (part == null) {
             throw new InvalidRetroException("reflection is required");
@@ -299,21 +292,8 @@ public class SprintRetroService {
                 text.put(key, clean);
             });
         }
-        Set<String> checks = new LinkedHashSet<>();
-        if (part.checks() != null) {
-            if (part.checks().size() > MAX_CHECKS) {
-                problems.add("at most " + MAX_CHECKS + " checklist items");
-            }
-            for (String id : part.checks()) {
-                if (id == null || !CHECK_ID.matcher(id).matches()) {
-                    problems.add("invalid checklist item " + id);
-                } else {
-                    checks.add(id);
-                }
-            }
-        }
         throwIfAny(problems);
-        return new StudentPart(ranks, text, List.copyOf(checks));
+        return new StudentPart(ranks, text);
     }
 
     /** Checks a teacher's part and returns it with blanks and zero ranks removed. */
@@ -422,8 +402,7 @@ public class SprintRetroService {
             return StudentPart.empty();
         }
         StudentPart part = read(reflection.getStudentData(), StudentPart.class);
-        return new StudentPart(orEmpty(part.ranks()), orEmpty(part.text()),
-                part.checks() == null ? List.of() : part.checks());
+        return new StudentPart(orEmpty(part.ranks()), orEmpty(part.text()));
     }
 
     private TeacherPart readTeacher(SprintReflectionEntity reflection) {

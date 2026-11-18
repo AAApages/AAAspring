@@ -71,7 +71,7 @@ public class SprintRetroApiRestController {
         return new SprintList(SprintRetroService.isTeacher(caller(user)), service.sprints());
     }
 
-    /** GET /api/sprint-retros/template - the Ground 0 checklist, items, rank scales and questions. */
+    /** GET /api/sprint-retros/template - the Ground 0 items, rank scales and questions. */
     @GetMapping("/template")
     public Template template() {
         return SprintRetroTemplate.ground0();
@@ -110,7 +110,7 @@ public class SprintRetroApiRestController {
         return found(service.reflection(id, caller(user)));
     }
 
-    /** PUT /api/sprint-retros/{id}/reflection - saves the caller's ranks, writing and checklist. */
+    /** PUT /api/sprint-retros/{id}/reflection - saves the caller's ranks and writing. */
     @PutMapping("/{id}/reflection")
     public ResponseEntity<ReflectionView> saveMine(@AuthenticationPrincipal UserDetails user, @PathVariable Long id,
             @RequestBody StudentPart part) {

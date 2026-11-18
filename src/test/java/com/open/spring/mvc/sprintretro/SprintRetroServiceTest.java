@@ -139,13 +139,6 @@ class SprintRetroServiceTest {
     }
 
     @Test
-    void checklistIdsFromAnyPageAreAcceptedAndKept() {
-        ReflectionView view = service.saveStudentPart(10L, student, new StudentPart(null, null, List.of("g1-1", "c-1a2b3c"))).orElseThrow();
-
-        assertEquals(List.of("g1-1", "c-1a2b3c"), view.student().checks());
-    }
-
-    @Test
     void aSprintWithReflectionsIsNotDeleted() {
         when(reflectionRepository.existsBySprint(sprint1)).thenReturn(true);
         assertThrows(SprintInUseException.class, () -> service.deleteSprint(10L));
@@ -182,11 +175,10 @@ class SprintRetroServiceTest {
         ranks.put("P04", null);
         Map<String, String> text = Map.of("tools", "  Fixed my Ruby path ", "techGoal", " ");
 
-        ReflectionView view = service.saveStudentPart(10L, student, new StudentPart(ranks, text, List.of("g1-1", "g1-1"))).orElseThrow();
+        ReflectionView view = service.saveStudentPart(10L, student, new StudentPart(ranks, text)).orElseThrow();
 
         assertEquals(Map.of("T01", 4), view.student().ranks());
         assertEquals(Map.of("tools", "Fixed my Ruby path"), view.student().text());
-        assertEquals(List.of("g1-1"), view.student().checks());
         assertEquals(NOW, view.updatedAt());
         assertEquals(3, view.teacher().ranks().get("T01"));
         assertEquals("Nice sprint", view.teacher().overall());
@@ -194,15 +186,13 @@ class SprintRetroServiceTest {
 
     @Test
     void studentPartRulesAreChecked() {
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(Map.of("T99", 3), null, null)), "unknown item T99");
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(Map.of("T01", 6), null, null)),
+        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(Map.of("T99", 3), null)), "unknown item T99");
+        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(Map.of("T01", 6), null)),
                 "T01 needs a rank from 0 to 5");
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, Map.of("mood", "ok"), null)),
+        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, Map.of("mood", "ok"))),
                 "unknown question mood");
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, Map.of("tools", "x".repeat(2001)), null)),
+        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, Map.of("tools", "x".repeat(2001)))),
                 "keep each answer to 2000 characters");
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, null, List.of("Not An Id"))),
-                "invalid checklist item Not An Id");
         verify(reflectionRepository, never()).save(any());
     }
 
