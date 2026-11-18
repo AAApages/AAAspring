@@ -5,6 +5,7 @@ import java.util.Set;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import com.open.spring.mvc.groups.Submitter;
@@ -18,11 +19,32 @@ public class AiGradingRouter {
     private final String systemGeminiKey;
     private final String systemGroqKey;
 
-    public AiGradingRouter(AiConnectionService connections, AiProviderClient client,
+    private final AiHouseModelClient house;
+
+    @Autowired
+    public AiGradingRouter(AiConnectionService connections, AiProviderClient client, AiHouseModelClient house,
             @Value("${gemini.api.key:}") String systemGeminiKey,
             @Value("${groq.api.key:${GROQ_API_KEY:}}") String systemGroqKey) {
-        this.connections = connections; this.client = client;
+        this.connections = connections; this.client = client; this.house = house;
         this.systemGeminiKey = systemGeminiKey; this.systemGroqKey = systemGroqKey;
+    }
+    /** Without a house model client: the overnight path always reports the house model unavailable. */
+    public AiGradingRouter(AiConnectionService connections, AiProviderClient client,
+            String systemGeminiKey, String systemGroqKey) {
+        this(connections, client, null, systemGeminiKey, systemGroqKey);
+    }
+    /**
+     * Night grading: asks only the self-hosted model. It never falls back to Gemini or Groq, so a
+     * night run costs nothing; when the house model is unavailable the caller leaves the work queued.
+     */
+    public String generateOvernight(String prompt) {
+        if (house == null) throw new AiProviderFailure(true, "No house model is configured.");
+        long started = System.nanoTime();
+        logger.info("AI provider request started submission={} source=house", MDC.get("aiSubmissionId"));
+        AiHouseModelClient.Reply reply = house.generate(prompt);
+        logger.info("AI provider response received submission={} source=house model={} elapsedMs={}; grade validation follows",
+            MDC.get("aiSubmissionId"), reply.model(), (System.nanoTime() - started) / 1_000_000);
+        return reply.text();
     }
     public String generate(String prompt, Submitter submitter) {
         return generate(prompt, submitter, 0);

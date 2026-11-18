@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
@@ -25,6 +26,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import com.open.spring.mvc.aiconnections.AiHouseModelClient;
+import com.open.spring.mvc.aiconnections.AiHouseSettingsRepository;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -70,6 +74,11 @@ public class AssignmentAiRegradeService {
         return thread;
     });
 
+    private final AiHouseSettingsRepository nightSettings;
+    private final AiHouseModelClient houseModel;
+    // Rolling average of one overnight (house model) grade, for night-time ETAs.
+    private volatile double avgNightGradeSeconds = 300.0;
+
     public AssignmentAiRegradeService(
             AssignmentSubmissionJPA submissionRepo,
             AssignmentJpaRepository assignmentRepo,
@@ -77,12 +86,32 @@ public class AssignmentAiRegradeService {
             SubmissionGradingService gradingService,
             AssignmentRubricService rubricService,
             JdbcTemplate jdbcTemplate) {
+        this(submissionRepo, assignmentRepo, aiGrader, gradingService, rubricService, jdbcTemplate, null, null);
+    }
+
+    @Autowired
+    public AssignmentAiRegradeService(
+            AssignmentSubmissionJPA submissionRepo,
+            AssignmentJpaRepository assignmentRepo,
+            SubmissionAiGrader aiGrader,
+            SubmissionGradingService gradingService,
+            AssignmentRubricService rubricService,
+            JdbcTemplate jdbcTemplate,
+            AiHouseSettingsRepository nightSettings,
+            AiHouseModelClient houseModel) {
         this.submissionRepo = submissionRepo;
         this.assignmentRepo = assignmentRepo;
         this.aiGrader = aiGrader;
         this.gradingService = gradingService;
         this.rubricService = rubricService;
         this.jdbcTemplate = jdbcTemplate;
+        this.nightSettings = nightSettings;
+        this.houseModel = houseModel;
+    }
+
+    /** During the night window automated grading uses only the house model (night grading run). */
+    public boolean nightWindowOpen() {
+        return nightSettings != null && nightSettings.isNightWindowOpen();
     }
 
     /**
@@ -115,6 +144,10 @@ public class AssignmentAiRegradeService {
      * write lock long enough for a concurrent auto-create to fail with SQLITE_BUSY_SNAPSHOT.
      */
     public void requestRubric(Long assignmentId, String name, String description, String pageContent) {
+        if (nightWindowOpen()) {
+            logger.info("Rubric for assignment {} deferred to the night grading run", assignmentId);
+            return;
+        }
         afterCommit(() -> {
             try {
                 Assignment assignment = assignmentRepo.findById(assignmentId).orElse(null);
@@ -161,8 +194,8 @@ public class AssignmentAiRegradeService {
     }
 
     void runOnce() {
-        if (!running.compareAndSet(false, true)) {
-            return;
+        if (nightWindowOpen() || !running.compareAndSet(false, true)) {
+            return; // At night the queue belongs to the night grading run (house model only).
         }
         try {
             // Only current submissions: an older row a resubmit superseded (from before resubmits
@@ -197,7 +230,7 @@ public class AssignmentAiRegradeService {
      * Returns false if a run is already in progress.
      */
     public boolean runQueueNow() {
-        if (running.get()) {
+        if (running.get() || nightWindowOpen()) {
             return false;
         }
         Thread thread = new Thread(this::runOnce, "ai-regrade-now");
@@ -282,6 +315,14 @@ public class AssignmentAiRegradeService {
         boolean isRunning = running.get();
         long untilNextRun = isRunning ? 0 : Math.max(0, (nextRunAtMillis - System.currentTimeMillis()) / 1000);
         double perGrade = secondsPerGrade();
+        if (nightWindowOpen()) {
+            // At night only the house model grades; without one, the cloud queue resumes when the window ends.
+            boolean house = houseModel != null && houseModel.isAvailable();
+            isRunning = house && isRunning;
+            untilNextRun = house ? (isRunning ? 0 : untilNextRun)
+                    : Math.max(0, (nightSettings.nightWindowEnd().toEpochMilli() - System.currentTimeMillis()) / 1000);
+            perGrade = house ? avgNightGradeSeconds : perGrade;
+        }
         List<QueueEntry> entries = new ArrayList<>();
         for (List<Long> ids : groupByAssignment(rows).values()) {
             for (Long id : ids) {
@@ -374,13 +415,39 @@ public class AssignmentAiRegradeService {
         return byAssignment;
     }
 
+    /** Takes the queue for the night grading run; false while another run is going. */
+    boolean tryAcquireRun() {
+        return running.compareAndSet(false, true);
+    }
+
+    void releaseRun() {
+        nextRunAtMillis = System.currentTimeMillis() + intervalMs;
+        running.set(false);
+    }
+
+    boolean isGradingNow(Long submissionId) {
+        return gradingNow.contains(submissionId);
+    }
+
+    void recordNightGradeSeconds(double seconds) {
+        avgNightGradeSeconds = avgNightGradeSeconds * 0.8 + seconds * 0.2;
+    }
+
     /** Makes sure the assignment has a usable AI rubric, generating one if needed. */
     private boolean ensureAiRubric(Assignment assignment) {
+        return ensureAiRubric(assignment, false);
+    }
+
+    /** {@code overnight} generates a missing rubric with the house model only. */
+    boolean ensureAiRubric(Assignment assignment, boolean overnight) {
         if (AssignmentRubricService.isAiRubricReady(assignment.getAiRubric(), assignment.getPoints())) {
             return true;
         }
-        String generated = rubricService.generateRubric(
-                assignment.getName(), assignment.getDescription(), null, assignment.getPoints());
+        String generated = overnight
+                ? rubricService.generateRubric(assignment.getName(), assignment.getDescription(), null,
+                        assignment.getPoints(), true)
+                : rubricService.generateRubric(assignment.getName(), assignment.getDescription(), null,
+                        assignment.getPoints());
         if (generated == null) {
             logger.info("AI re-grade: rubric for assignment {} still unavailable; will retry", assignment.getId());
             return false;
@@ -398,35 +465,47 @@ public class AssignmentAiRegradeService {
 
      */
     private boolean regrade(Long submissionId, Assignment assignment, boolean flaggedOnly) {
+        GradingOutcome outcome = gradeOnce(submissionId, assignment, flaggedOnly, false);
+        return outcome == GradingOutcome.AI_GRADE_APPLIED || outcome == GradingOutcome.MANUAL_OVERRIDE_KEPT;
+    }
+
+    /**
+     * Grades one submission once and returns the outcome, or null when it was skipped or threw.
+     * {@code flaggedOnly} skips it unless it is still flagged, and clears the flag when it turns out
+     * not gradeable. {@code overnight} asks only the house model.
+     */
+    GradingOutcome gradeOnce(Long submissionId, Assignment assignment, boolean flaggedOnly, boolean overnight) {
         try {
             AssignmentSubmission submission = submissionRepo.findById(submissionId).orElse(null);
             if (submission == null || (flaggedOnly && !Boolean.TRUE.equals(submission.getNeedsAiRegrade()))) {
-                return false;
+                return null;
             }
             // Loaded outside a session, so swap the lazy proxy for the already-loaded assignment.
             submission.setAssignment(assignment);
             long started = System.nanoTime();
-            GradingResult result = aiGrader.grade(submission);
-            recordGradeSeconds((System.nanoTime() - started) / 1e9);
+            GradingResult result = overnight ? aiGrader.grade(submission, true) : aiGrader.grade(submission);
+            double seconds = (System.nanoTime() - started) / 1e9;
+            if (overnight) {
+                recordNightGradeSeconds(seconds);
+            } else {
+                recordGradeSeconds(seconds);
+            }
             switch (result.outcome()) {
-                case AI_GRADE_APPLIED, MANUAL_OVERRIDE_KEPT -> {
-                    logger.info("AI re-grade: submission {} -> {} ({})", submissionId,
-                            result.state().aiGrade(), result.outcome());
-                    return true;
-                }
+                case AI_GRADE_APPLIED, MANUAL_OVERRIDE_KEPT -> logger.info("AI re-grade: submission {} -> {} ({}{})",
+                        submissionId, result.state().aiGrade(), result.outcome(), overnight ? ", overnight" : "");
                 case AI_NOT_GRADEABLE -> {
                     if (flaggedOnly) {
                         gradingService.clearAiRegradeFlag(submissionId, submission.currentRevision());
                     }
-                    return false;
                 }
                 default -> {
-                    return false; // Failed (stays flagged for the next run) or revised meanwhile.
+                    // Failed (stays flagged for the next run) or revised meanwhile.
                 }
             }
+            return result.outcome();
         } catch (Exception e) {
             logger.warn("AI re-grade failed submission={} failureType={}", submissionId, e.getClass().getSimpleName());
-            return false;
+            return null;
         }
     }
 

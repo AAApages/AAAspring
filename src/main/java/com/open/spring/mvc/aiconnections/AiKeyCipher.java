@@ -30,17 +30,24 @@ public class AiKeyCipher {
     public void requireAvailable() { if (!isAvailable()) throw AiConnectionException.unavailable(); }
 
     public String encrypt(long personId, AiProvider provider, String plaintext) {
+        return encrypt(personId + ":" + provider.name(), plaintext);
+    }
+    /** Encrypts a system secret; the context (for example "house-model") is bound as associated data. */
+    public String encrypt(String context, String plaintext) {
         requireAvailable();
         byte[] nonce = new byte[12];
         random.nextBytes(nonce);
         try {
-            byte[] encrypted = cipher(Cipher.ENCRYPT_MODE, personId, provider, nonce)
+            byte[] encrypted = cipher(Cipher.ENCRYPT_MODE, context, nonce)
                 .doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
             return "v1:" + Base64.getEncoder().encodeToString(
                 ByteBuffer.allocate(nonce.length + encrypted.length).put(nonce).put(encrypted).array());
         } catch (GeneralSecurityException e) { throw AiConnectionException.unavailable(); }
     }
     public String decrypt(long personId, AiProvider provider, String envelope) {
+        return decrypt(personId + ":" + provider.name(), envelope);
+    }
+    public String decrypt(String context, String envelope) {
         requireAvailable();
         try {
             if (envelope == null || !envelope.startsWith("v1:")) throw new IllegalArgumentException();
@@ -50,16 +57,16 @@ public class AiKeyCipher {
             buffer.get(nonce);
             byte[] encrypted = new byte[buffer.remaining()];
             buffer.get(encrypted);
-            return new String(cipher(Cipher.DECRYPT_MODE, personId, provider, nonce).doFinal(encrypted),
+            return new String(cipher(Cipher.DECRYPT_MODE, context, nonce).doFinal(encrypted),
                 StandardCharsets.UTF_8);
         } catch (GeneralSecurityException | IllegalArgumentException e) {
             throw AiConnectionException.unavailable();
         }
     }
-    private Cipher cipher(int mode, long personId, AiProvider provider, byte[] nonce) throws GeneralSecurityException {
+    private Cipher cipher(int mode, String context, byte[] nonce) throws GeneralSecurityException {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(mode, key, new GCMParameterSpec(128, nonce));
-        cipher.updateAAD(("ocs-ai:" + personId + ":" + provider.name()).getBytes(StandardCharsets.UTF_8));
+        cipher.updateAAD(("ocs-ai:" + context).getBytes(StandardCharsets.UTF_8));
         return cipher;
     }
 }

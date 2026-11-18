@@ -224,3 +224,27 @@ GET {{baseUrl}}/api/grade-reviews/submission/{{submission.response.body.$.id}}
 ### 27. Clean up the test assignment
 
 POST {{baseUrl}}/api/assignments/delete/{{testAssignment.response.body.$.id}}
+
+### Night grading (optional, run after signing in as the admin in step 1)
+
+### N1. Night grading status: window, house model, waiting work, last run
+
+GET {{baseUrl}}/api/night-grading/status
+
+### N2. Settings with the model server presets (never includes the API key)
+
+GET {{baseUrl}}/api/night-grading/settings
+
+### N3. List the models a house server offers (fills the model dropdowns)
+
+POST {{baseUrl}}/api/night-grading/settings/test-connection
+Content-Type: application/json
+
+{
+  "url": "http://localhost:11434/v1",
+  "apiKey": ""
+}
+
+### N4. Start a night pass now (house model only; without one it just reports the counts)
+
+POST {{baseUrl}}/api/night-grading/run-now

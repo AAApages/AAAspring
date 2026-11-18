@@ -628,6 +628,10 @@ public class AssignmentSubmissionAPIController {
         if (denied != null) {
             return denied;
         }
+        if (aiRegradeService.nightWindowOpen()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error",
+                    "Night grading is on: only the house model grades until the night window ends."));
+        }
         return aiRegradeService.runQueueNow()
                 ? ResponseEntity.accepted().body(Map.of("status", "started"))
                 : ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "A grading run is already in progress."));

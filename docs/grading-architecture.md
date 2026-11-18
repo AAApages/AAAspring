@@ -139,6 +139,23 @@ A grader can also act on the new revision without a petition: give a new grade, 
 - An AI re-evaluation during a review is stored on the review only and never changes the grade.
 - A submission has at most one open review at a time, whether a teacher opened it or a student petitioned.
 
+## Night grading
+
+The self-hosted models (Qwen, Gemma 4 on the school GPUs) are free but too slow for the submit request, so they grade at night. `AssignmentNightGradingService` runs during a window (default 22:00 to 06:00 America/Los_Angeles) and never calls a paid model:
+
+| Path | During the window |
+| --- | --- |
+| Night run | House model only, one item at a time: queued submissions (`needs_ai_regrade`), then never AI-graded ones, then open assignments without a ready rubric. Each item is tried at most once a night. |
+| 5-minute cloud queue, "Run queue now", rubric requests after auto-create | Wait until the window closes. |
+| Student submits (`autoGrade`) | The revision is queued for the night run instead of graded. |
+| Teacher-clicked Grade now, AI re-grade, review AI evaluation | Unchanged (cloud). |
+
+Without a house model, or while its server is down, the night run grades nothing and reports what is waiting; the cloud queue grades it after the window closes. Grades go through `SubmissionAiGrader` and `SubmissionGradingService` like any AI grade, so manual grades, revisions and closed assignments are respected.
+
+- `aiconnections/AiHouseModelClient` speaks the OpenAI-compatible API (`{url}/chat/completions`, `{url}/models`) that Ollama, vLLM and llama.cpp serve. It tries the primary model, then the backup; strips Qwen `<think>` blocks; and after a failed connection skips the server for 10 minutes. `AiGradingRouter.generateOvernight` is the only grading entry to it and never falls back to Gemini or Groq.
+- `aiconnections/AiHouseSettingsRepository` holds the settings in `ai_house_settings` (name/value rows). A value saved on the page wins; otherwise these `.env` keys apply: `AI_HOUSE_PRESET`, `AI_HOUSE_URL`, `AI_HOUSE_MODELS` (`primary,backup`), `AI_HOUSE_API_KEY`, `AI_HOUSE_TIMEOUT_SECONDS` (900), `NIGHT_GRADING_ENABLED`, `NIGHT_GRADING_START`, `NIGHT_GRADING_END`, `NIGHT_GRADING_ZONE`. A saved API key is encrypted with `AI_KEY_ENCRYPTION_KEY` and never returned.
+- The **Night grading** tab on `/mvc/synergy/ai-queue` shows the status and has a "Run night pass now" button. Admins edit the settings there: the model server dropdown comes from `AiHouseSettingsRepository.Preset`, and **Test connection** fills the model dropdowns from the server's model list. When the GPU box is ready, add a preset line with its URL and models and it appears in the dropdown. Teachers see the settings read-only.
+
 ## REST operations
 
 Every route requires a signed-in account.
@@ -161,6 +178,12 @@ Every route requires a signed-in account.
 | POST | `/api/grade-reviews/{reviewId}/ai-evaluation` | teacher | | `ReviewResponse` |
 | POST | `/api/grade-reviews/{reviewId}/similarity` | teacher | | `ReviewResponse` |
 | POST | `/api/grade-reviews/{reviewId}/decision` | teacher | `DecisionRequest` | `ReviewResponse` |
+| GET | `/api/night-grading/status` | signed in | | `Status` |
+| POST | `/api/night-grading/run-now` | teacher | | `StartResult` (202 started, 409 busy, 200 with counts when no house model) |
+| GET | `/api/night-grading/settings` | teacher | | settings, presets, `canEdit` |
+| PUT, DELETE | `/api/night-grading/settings` | admin | `Changes` / none (reset to `.env`) | settings |
+| POST | `/api/night-grading/settings/test-connection` | admin | `ConnectionTest` | `ModelList` |
+| POST | `/api/night-grading/settings/test-prompt` | admin | | model and elapsed time |
 
 `PetitionView` shows the student their message, the decision and its rationale, but not the teacher's evidence, AI re-evaluation or similarity matches.
 

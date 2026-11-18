@@ -89,12 +89,17 @@ public class AssignmentAiGradingService {
     }
 
     public GradeResult grade(AssignmentSubmission submission) throws Exception {
+        return grade(submission, false);
+    }
+
+    /** {@code overnight} asks only the self-hosted model (night grading); otherwise the cloud chain. */
+    public GradeResult grade(AssignmentSubmission submission, boolean overnight) throws Exception {
         String previous = MDC.get("aiSubmissionId");
         MDC.put("aiSubmissionId", String.valueOf(submission.getId()));
         long started = System.nanoTime();
-        logger.info("AI grading started submission={}", submission.getId());
+        logger.info("AI grading started submission={} overnight={}", submission.getId(), overnight);
         try {
-            GradeResult result = gradeSubmission(submission);
+            GradeResult result = gradeSubmission(submission, overnight);
             logger.info("AI grading result submission={} status={} grade={} defaultRubric={} elapsedMs={}",
                 submission.getId(), result.status(), result.grade(), result.usedDefaultRubric(),
                 (System.nanoTime() - started) / 1_000_000);
@@ -109,7 +114,7 @@ public class AssignmentAiGradingService {
         }
     }
 
-    private GradeResult gradeSubmission(AssignmentSubmission submission) throws Exception {
+    private GradeResult gradeSubmission(AssignmentSubmission submission, boolean overnight) throws Exception {
         Map<String, Object> content = submission.getContent();
         String contentType = content == null ? null : String.valueOf(content.getOrDefault("type", "")).trim();
 
@@ -152,7 +157,8 @@ public class AssignmentAiGradingService {
 
         String text;
         try {
-            text = aiRouter.generate(prompt, submission.getSubmitter(), hacks.size());
+            text = overnight ? aiRouter.generateOvernight(prompt)
+                    : aiRouter.generate(prompt, submission.getSubmitter(), hacks.size());
         } catch (AiProviderFailure e) {
             logger.warn("AI grading stopped submission={} reason=provider_failure httpStatus={} operational={}",
                 submission.getId(), e.getHttpStatus(), e.isOperational());

@@ -15,6 +15,12 @@
         : 'Your submissions waiting for an AI grade, and roughly how long until they are graded.'">
     </div>
 
+    <div class="g-tabs" role="tablist" th:if="${isStaff}">
+        <button type="button" class="g-tab active" role="tab" data-tab="panelQueue" aria-selected="true">Queue</button>
+        <button type="button" class="g-tab" role="tab" data-tab="panelNight" aria-selected="false">Night grading</button>
+    </div>
+
+    <div id="panelQueue">
     <div class="g-stats" id="queueStats"></div>
     <div class="g-toolbar" th:if="${isStaff}">
         <input type="text" class="g-search" id="submitterSearch" placeholder="Search by student name or username"
@@ -38,6 +44,61 @@
         </table>
     </div>
     <div class="g-sub mt-2">The countdown is live; the list refreshes every 30 seconds. Estimates use the grader's recent speed and the AI key's rate limit.</div>
+    </div>
+
+    <div id="panelNight" hidden th:if="${isStaff}">
+        <div class="g-sub">At night, ungraded work is graded slowly by our own (house) AI models, which are free.
+            No paid model is used during the night window; anything still waiting is graded by the normal queue in the morning.</div>
+        <div class="g-stats mt-2" id="nightStats"></div>
+        <div class="g-panel">
+            <b>Last run</b>
+            <div class="g-sub" id="nightLastRun">Loading…</div>
+            <div class="g-toolbar mt-2">
+                <button type="button" class="g-btn primary" id="nightRunNow">Run night pass now</button>
+                <span class="g-sub" id="nightMsg"></span>
+            </div>
+        </div>
+
+        <form class="g-panel" id="nightForm" autocomplete="off">
+            <b>Settings</b> <span class="g-sub" id="nightReadOnly" hidden>(read-only: only admins can change these)</span>
+            <fieldset id="nightFields" class="mt-2" style="border:0;padding:0;margin:0">
+                <label class="d-block mb-2"><input type="checkbox" id="ngEnabled"> Night grading enabled</label>
+                <div class="g-two-col">
+                    <label>Window starts<br><input type="time" id="ngStart" class="g-input" required></label>
+                    <label>Window ends<br><input type="time" id="ngEnd" class="g-input" required></label>
+                </div>
+                <label class="d-block mt-2">Time zone<br><select id="ngZone" class="g-input"></select></label>
+
+                <hr>
+                <label class="d-block">Model server<br><select id="ngPreset" class="g-input"></select></label>
+                <label class="d-block mt-2">Server URL (OpenAI-compatible, ends in /v1)<br>
+                    <input type="text" id="ngUrl" class="g-input" style="width:100%" placeholder="http://gpu-box:11434/v1"></label>
+                <label class="d-block mt-2">API key (optional)<br>
+                    <input type="password" id="ngKey" class="g-input" style="width:100%" autocomplete="new-password"
+                        placeholder="Leave blank to keep the saved key"></label>
+                <div class="g-sub" id="ngKeyState"></div>
+                <label class="d-block"><input type="checkbox" id="ngClearKey"> Remove the saved key</label>
+                <div class="g-toolbar mt-2">
+                    <button type="button" class="g-btn" id="ngTest">Test connection</button>
+                    <span class="g-sub" id="ngTestMsg"></span>
+                </div>
+                <div class="g-two-col">
+                    <label>Primary model<br><select id="ngPrimary" class="g-input"></select></label>
+                    <label>Backup model (optional)<br><select id="ngBackup" class="g-input"></select></label>
+                </div>
+                <label class="d-block mt-2">Timeout per request (seconds)<br>
+                    <input type="number" id="ngTimeout" class="g-input" min="30" max="3600" step="1"></label>
+
+                <div class="g-toolbar mt-3">
+                    <button type="submit" class="g-btn primary" id="ngSave">Save</button>
+                    <button type="button" class="g-btn" id="ngTestPrompt">Send test prompt</button>
+                    <button type="button" class="g-btn" id="ngReset">Reset to defaults</button>
+                    <span class="g-sub" id="ngFormMsg"></span>
+                </div>
+            </fieldset>
+            <div class="g-sub mt-2" id="ngChanged"></div>
+        </form>
+    </div>
 </div>
 </th:block>
 
@@ -165,6 +226,189 @@
     load();
     setInterval(load, 30000);
     setInterval(tick, 1000);
+})();
+</script>
+<script th:if="${isStaff}">
+// Night grading tab: status, a manual run, and the admin settings for the house model.
+(function () {
+    const { esc, api } = window.Grading;
+    const $ = id => document.getElementById(id);
+    const ZONES = ['America/Los_Angeles', 'America/Denver', 'America/Phoenix', 'America/Chicago', 'America/New_York', 'UTC'];
+    let presets = [];
+    let canEdit = false;
+
+    document.querySelectorAll('.g-tab[data-tab]').forEach(tab => tab.addEventListener('click', () => {
+        document.querySelectorAll('.g-tab[data-tab]').forEach(other => {
+            const active = other === tab;
+            other.classList.toggle('active', active);
+            other.setAttribute('aria-selected', String(active));
+            $(other.dataset.tab).hidden = !active;
+        });
+        if (tab.dataset.tab === 'panelNight') loadNight();
+    }));
+
+    const when = iso => iso ? new Date(iso).toLocaleString() : '—';
+
+    async function loadStatus() {
+        try {
+            const s = await api('/api/night-grading/status');
+            const house = !s.houseConfigured ? 'None configured'
+                : s.houseAvailable ? esc(s.models.join(' → '))
+                : `Unreachable${s.houseDownUntil ? ', retry ' + esc(new Date(s.houseDownUntil).toLocaleTimeString()) : ''}`;
+            $('nightStats').innerHTML = `
+                <div class="g-stat"><b>${s.enabled ? (s.windowOpen ? 'Open now' : 'Closed') : 'Off'}</b>
+                    <span>${esc(s.windowStart)}–${esc(s.windowEnd)} ${esc(s.zone)}</span></div>
+                <div class="g-stat"><b>${house}</b><span>house model</span></div>
+                <div class="g-stat"><b>${s.waiting.queued + s.waiting.ungraded}</b><span>submissions waiting</span></div>
+                <div class="g-stat"><b>${s.waiting.rubrics}</b><span>rubrics missing</span></div>
+                <div class="g-stat"><b>${s.running ? 'Running' : 'Idle'}</b><span>night run</span></div>`;
+            const r = s.lastRun;
+            $('nightLastRun').textContent = !r ? 'No night run yet since the server started.'
+                : `${r.manual ? 'Manual' : 'Scheduled'} run started ${when(r.startedAt)}`
+                    + (r.endedAt ? `, ended ${when(r.endedAt)} (${r.endReason})` : ', still running')
+                    + `: ${r.graded} graded, ${r.failed} failed, ${r.notGradeable} not gradeable, ${r.rubrics} rubrics.`;
+        } catch (e) {
+            $('nightLastRun').textContent = 'Could not load night grading status: ' + e.message;
+        }
+    }
+
+    function setOptions(select, values, selected, blankLabel) {
+        const list = [...new Set(values.filter(Boolean).concat(selected ? [selected] : []))];
+        select.innerHTML = (blankLabel != null ? `<option value="">${esc(blankLabel)}</option>` : '')
+            + list.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+        select.value = selected || '';
+    }
+
+    function presetById(id) { return presets.find(p => p.id === id) || { urlEditable: true }; }
+
+    function applyPreset(fill) {
+        const preset = presetById($('ngPreset').value);
+        const none = $('ngPreset').value === 'NONE';
+        $('ngUrl').readOnly = !preset.urlEditable;
+        if (fill && !preset.urlEditable) $('ngUrl').value = preset.url || '';
+        if (fill && (preset.primaryModel || preset.backupModel)) {
+            setOptions($('ngPrimary'), [preset.primaryModel], preset.primaryModel, '— choose —');
+            setOptions($('ngBackup'), [preset.backupModel], preset.backupModel, 'None');
+        }
+        ['ngUrl', 'ngKey', 'ngClearKey', 'ngTest', 'ngPrimary', 'ngBackup', 'ngTestPrompt']
+            .forEach(id => { $(id).disabled = none || !canEdit; });
+        if (canEdit) $('ngUrl').disabled = none;
+    }
+
+    function fillForm(body) {
+        const s = body.settings;
+        presets = body.presets;
+        canEdit = body.canEdit;
+        $('ngEnabled').checked = s.enabled;
+        $('ngStart').value = s.windowStart;
+        $('ngEnd').value = s.windowEnd;
+        setOptions($('ngZone'), ZONES, s.zone);
+        $('ngPreset').innerHTML = presets.map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+        $('ngPreset').value = s.preset;
+        $('ngUrl').value = s.baseUrl || '';
+        $('ngKey').value = '';
+        $('ngClearKey').checked = false;
+        $('ngKeyState').textContent = s.apiKeySet
+            ? `A key is set (${s.sources.api_key === 'saved' ? 'saved here' : 'from .env'}).` : 'No key set.';
+        if (!body.keyEncryptionAvailable) $('ngKeyState').textContent += ' Keys cannot be saved here until AI_KEY_ENCRYPTION_KEY is set.';
+        setOptions($('ngPrimary'), [], s.primaryModel, '— choose —');
+        setOptions($('ngBackup'), [], s.backupModel, 'None');
+        $('ngTimeout').value = s.timeoutSeconds;
+        $('nightFields').disabled = !canEdit;
+        $('nightReadOnly').hidden = canEdit;
+        $('ngChanged').textContent = s.updatedAt
+            ? `Last changed by ${s.updatedBy || 'unknown'} at ${when(s.updatedAt)}.` : 'Using the server (.env) defaults.';
+        applyPreset(false);
+    }
+
+    async function loadNight() {
+        loadStatus();
+        try {
+            fillForm(await api('/api/night-grading/settings'));
+        } catch (e) {
+            $('ngFormMsg').textContent = 'Could not load settings: ' + e.message;
+        }
+    }
+
+    const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body) });
+
+    $('ngPreset').addEventListener('change', () => applyPreset(true));
+
+    $('ngTest').addEventListener('click', async () => {
+        $('ngTestMsg').textContent = 'Connecting…';
+        try {
+            const r = await api('/api/night-grading/settings/test-connection',
+                json('POST', { url: $('ngUrl').value, apiKey: $('ngKey').value }));
+            setOptions($('ngPrimary'), r.models, $('ngPrimary').value || r.models[0], '— choose —');
+            setOptions($('ngBackup'), r.models, $('ngBackup').value, 'None');
+            $('ngTestMsg').textContent = `Connected: ${r.models.length} model(s), ${r.elapsedMs} ms.`;
+        } catch (e) {
+            $('ngTestMsg').textContent = e.message;
+        }
+    });
+
+    $('nightForm').addEventListener('submit', async ev => {
+        ev.preventDefault();
+        $('ngFormMsg').textContent = 'Saving…';
+        try {
+            fillForm(await api('/api/night-grading/settings', json('PUT', {
+                enabled: $('ngEnabled').checked, windowStart: $('ngStart').value, windowEnd: $('ngEnd').value,
+                zone: $('ngZone').value, preset: $('ngPreset').value, baseUrl: $('ngUrl').value,
+                primaryModel: $('ngPrimary').value, backupModel: $('ngBackup').value,
+                timeoutSeconds: Number($('ngTimeout').value), apiKey: $('ngKey').value,
+                clearApiKey: $('ngClearKey').checked })));
+            $('ngFormMsg').textContent = 'Saved.';
+            loadStatus();
+        } catch (e) {
+            $('ngFormMsg').textContent = e.message;
+        }
+    });
+
+    $('ngTestPrompt').addEventListener('click', async ev => {
+        ev.target.disabled = true;
+        $('ngFormMsg').textContent = 'Asking the saved model (slow models can take minutes)…';
+        try {
+            const r = await api('/api/night-grading/settings/test-prompt', json('POST'));
+            $('ngFormMsg').textContent = `${r.model} answered in ${(r.elapsedMs / 1000).toFixed(1)} s${r.ok ? '' : ' (unexpected reply)'}.`;
+        } catch (e) {
+            $('ngFormMsg').textContent = e.message;
+        }
+        ev.target.disabled = false;
+        loadStatus();
+    });
+
+    $('ngReset').addEventListener('click', async () => {
+        if (!confirm('Reset night grading settings to the server defaults? A saved API key is removed too.')) return;
+        try {
+            fillForm(await api('/api/night-grading/settings', { method: 'DELETE' }));
+            $('ngFormMsg').textContent = 'Reset to defaults.';
+            loadStatus();
+        } catch (e) {
+            $('ngFormMsg').textContent = e.message;
+        }
+    });
+
+    $('nightRunNow').addEventListener('click', async ev => {
+        ev.target.disabled = true;
+        const text = {
+            started: 'Night run started.',
+            busy: 'A grading run is already going.',
+            no_house_model: 'No house model is configured, so nothing was graded.',
+            house_unavailable: 'The house model server is unreachable right now; nothing was graded.',
+        };
+        try {
+            const r = await api('/api/night-grading/run-now', { method: 'POST' });
+            const waiting = r.waiting ? ` Waiting: ${r.waiting.queued + r.waiting.ungraded} submission(s), ${r.waiting.rubrics} rubric(s).` : '';
+            $('nightMsg').textContent = (text[r.status] || r.status) + waiting;
+        } catch (e) {
+            $('nightMsg').textContent = e.body && text[e.body.status] ? text[e.body.status] : e.message;
+        }
+        ev.target.disabled = false;
+        setTimeout(loadStatus, 1500);
+    });
+
+    setInterval(() => { if (!$('panelNight').hidden) loadStatus(); }, 30000);
 })();
 </script>
 </th:block>

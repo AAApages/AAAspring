@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.open.spring.mvc.aiconnections.AiHouseModelClient;
 
 /**
  * Generates a thorough, assignment-specific AI grading rubric from the assignment's
@@ -46,11 +47,15 @@ public class AssignmentRubricService {
     private final String geminiApiKey;
     private final String geminiApiUrl;
 
+    private final AiHouseModelClient houseModel;
+
     public AssignmentRubricService(
             ObjectMapper objectMapper,
+            AiHouseModelClient houseModel,
             @Value("${gemini.api.key:}") String geminiApiKey,
             @Value("${gemini.api.url:" + DEFAULT_GEMINI_API_URL + "}") String geminiApiUrl) {
         this.objectMapper = objectMapper;
+        this.houseModel = houseModel;
         this.geminiApiKey = geminiApiKey;
         this.geminiApiUrl = geminiApiUrl;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
@@ -70,7 +75,24 @@ public class AssignmentRubricService {
             String description,
             String pageContent,
             Double maxScore) {
-        if (geminiApiKey == null || geminiApiKey.isBlank()) {
+        return generateRubric(assignmentName, description, pageContent, maxScore, false);
+    }
+
+    /**
+     * Same as {@link #generateRubric(String, String, String, Double)}; {@code overnight} asks only
+     * the self-hosted model (night grading) and returns null when it is unavailable.
+     */
+    public String generateRubric(
+            String assignmentName,
+            String description,
+            String pageContent,
+            Double maxScore,
+            boolean overnight) {
+        if (overnight && (houseModel == null || !houseModel.isAvailable())) {
+            logger.info("Skipping overnight rubric generation for '{}': no house model available", assignmentName);
+            return null;
+        }
+        if (!overnight && (geminiApiKey == null || geminiApiKey.isBlank())) {
             logger.warn("Skipping assignment rubric generation: GEMINI_API_KEY is not configured");
             return null;
         }
@@ -91,9 +113,14 @@ public class AssignmentRubricService {
         String prompt = buildPrompt(assignmentName, description, sourceContent, maxScore);
 
         try {
-            JsonNode response = objectMapper.readTree(callGemini(prompt));
-            String rubric = response.path("candidates").path(0).path("content").path("parts").path(0)
-                    .path("text").asText("").trim();
+            String rubric;
+            if (overnight) {
+                rubric = houseModel.generate(prompt, false).text().trim(); // Plain text, not JSON mode.
+            } else {
+                JsonNode response = objectMapper.readTree(callGemini(prompt));
+                rubric = response.path("candidates").path(0).path("content").path("parts").path(0)
+                        .path("text").asText("").trim();
+            }
             if (!isAiRubricReady(rubric, maxScore)) {
                 logger.warn("Discarding generated rubric for '{}': its tiers are missing or not scaled to {}",
                         assignmentName, formatScore(aiTopScore(maxScore)));
@@ -101,7 +128,8 @@ public class AssignmentRubricService {
             }
             return rubric;
         } catch (Exception e) {
-            logger.warn("Assignment rubric generation failed using {}: {}", geminiApiUrl, e.getMessage());
+            logger.warn("Assignment rubric generation failed using {}: {}",
+                    overnight ? "house model" : geminiApiUrl, e.getMessage());
             return null;
         }
     }
