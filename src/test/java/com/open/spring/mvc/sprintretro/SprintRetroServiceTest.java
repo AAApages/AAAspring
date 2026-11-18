@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +24,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -30,6 +32,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.open.spring.mvc.person.Person;
 import com.open.spring.mvc.person.PersonJpaRepository;
+import com.open.spring.mvc.sprintretro.SprintRetroService.CalendarSprint;
 import com.open.spring.mvc.sprintretro.SprintRetroService.InvalidRetroException;
 import com.open.spring.mvc.sprintretro.SprintRetroService.Progress;
 import com.open.spring.mvc.sprintretro.SprintRetroService.ReflectionView;
@@ -107,6 +110,35 @@ class SprintRetroServiceTest {
     }
 
     @Test
+    void calendarSyncAddsNewSprintsAndMovesDatesWithoutTouchingTheRest() {
+        LocalDate moved = SEP_1.plusDays(1);
+        LocalDate secondStart = sprint2.getStartDate();
+        LocalDate secondEnd = secondStart.plusDays(25);
+        sprint2.setEndDate(secondEnd);
+
+        service.syncCalendar(teacher, List.of(
+                new CalendarSprint("Sprint 1", moved, moved.plusDays(25)),
+                new CalendarSprint("Sprint 2", secondStart, secondEnd),
+                new CalendarSprint("Sprint 3", secondEnd.plusDays(3), secondEnd.plusDays(28))));
+
+        assertEquals(moved, sprint1.getStartDate());
+        assertEquals(moved.plusDays(25), sprint1.getEndDate());
+        verify(sprintRepository).save(sprint1);
+        verify(sprintRepository, never()).save(sprint2);
+        ArgumentCaptor<SprintRetroEntity> saved = ArgumentCaptor.forClass(SprintRetroEntity.class);
+        verify(sprintRepository, times(2)).save(saved.capture());
+        assertEquals("Sprint 3", saved.getAllValues().get(1).getName());
+        assertEquals(teacher, saved.getAllValues().get(1).getCreatedBy());
+        verify(sprintRepository, never()).delete(any());
+    }
+
+    @Test
+    void calendarSyncRejectsAnEmptyOrInvalidCalendar() {
+        assertInvalid(() -> service.syncCalendar(teacher, List.of()), "the calendar lists no sprints");
+        assertInvalid(() -> service.syncCalendar(teacher, List.of(new CalendarSprint("Sprint 3", null, null))), "pick a start date");
+    }
+
+    @Test
     void aSprintWithReflectionsIsNotDeleted() {
         when(reflectionRepository.existsBySprint(sprint1)).thenReturn(true);
         assertThrows(SprintInUseException.class, () -> service.deleteSprint(10L));
@@ -143,11 +175,10 @@ class SprintRetroServiceTest {
         ranks.put("P04", null);
         Map<String, String> text = Map.of("tools", "  Fixed my Ruby path ", "techGoal", " ");
 
-        ReflectionView view = service.saveStudentPart(10L, student, new StudentPart(ranks, text, List.of("g1-1", "g1-1"))).orElseThrow();
+        ReflectionView view = service.saveStudentPart(10L, student, new StudentPart(ranks, text)).orElseThrow();
 
         assertEquals(Map.of("T01", 4), view.student().ranks());
         assertEquals(Map.of("tools", "Fixed my Ruby path"), view.student().text());
-        assertEquals(List.of("g1-1"), view.student().checks());
         assertEquals(NOW, view.updatedAt());
         assertEquals(3, view.teacher().ranks().get("T01"));
         assertEquals("Nice sprint", view.teacher().overall());
@@ -155,15 +186,13 @@ class SprintRetroServiceTest {
 
     @Test
     void studentPartRulesAreChecked() {
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(Map.of("T99", 3), null, null)), "unknown item T99");
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(Map.of("T01", 6), null, null)),
+        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(Map.of("T99", 3), null)), "unknown item T99");
+        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(Map.of("T01", 6), null)),
                 "T01 needs a rank from 0 to 5");
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, Map.of("mood", "ok"), null)),
+        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, Map.of("mood", "ok"))),
                 "unknown question mood");
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, Map.of("tools", "x".repeat(2001)), null)),
+        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, Map.of("tools", "x".repeat(2001)))),
                 "keep each answer to 2000 characters");
-        assertInvalid(() -> service.saveStudentPart(10L, student, new StudentPart(null, null, List.of("zz"))),
-                "unknown checklist item zz");
         verify(reflectionRepository, never()).save(any());
     }
 

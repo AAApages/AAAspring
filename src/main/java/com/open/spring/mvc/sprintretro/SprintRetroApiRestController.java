@@ -22,6 +22,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.open.spring.mvc.person.Person;
 import com.open.spring.mvc.person.PersonJpaRepository;
+import com.open.spring.mvc.sprintretro.SprintRetroService.CalendarSprint;
 import com.open.spring.mvc.sprintretro.SprintRetroService.InvalidRetroException;
 import com.open.spring.mvc.sprintretro.SprintRetroService.Progress;
 import com.open.spring.mvc.sprintretro.SprintRetroService.ReflectionView;
@@ -52,6 +53,10 @@ public class SprintRetroApiRestController {
     public record SprintRequest(String name, LocalDate startDate, LocalDate endDate) {
     }
 
+    /** Body of PUT /api/sprint-retros/calendar: the sprints in the school calendar. */
+    public record CalendarRequest(List<CalendarSprint> sprints) {
+    }
+
     private final SprintRetroService service;
     private final PersonJpaRepository personRepository;
 
@@ -66,7 +71,7 @@ public class SprintRetroApiRestController {
         return new SprintList(SprintRetroService.isTeacher(caller(user)), service.sprints());
     }
 
-    /** GET /api/sprint-retros/template - the Ground 0 checklist, items, rank scales and questions. */
+    /** GET /api/sprint-retros/template - the Ground 0 items, rank scales and questions. */
     @GetMapping("/template")
     public Template template() {
         return SprintRetroTemplate.ground0();
@@ -76,6 +81,12 @@ public class SprintRetroApiRestController {
     @PostMapping
     public SprintView create(@AuthenticationPrincipal UserDetails user, @RequestBody SprintRequest request) {
         return service.createSprint(teacher(user), request.name(), request.startDate(), request.endDate());
+    }
+
+    /** PUT /api/sprint-retros/calendar - makes the stored sprints match the school calendar; teachers and admins only. */
+    @PutMapping("/calendar")
+    public List<SprintView> syncCalendar(@AuthenticationPrincipal UserDetails user, @RequestBody CalendarRequest request) {
+        return service.syncCalendar(teacher(user), request.sprints());
     }
 
     /** PUT /api/sprint-retros/{id} - renames or re-dates a sprint; teachers and admins only. */
@@ -99,7 +110,7 @@ public class SprintRetroApiRestController {
         return found(service.reflection(id, caller(user)));
     }
 
-    /** PUT /api/sprint-retros/{id}/reflection - saves the caller's ranks, writing and checklist. */
+    /** PUT /api/sprint-retros/{id}/reflection - saves the caller's ranks and writing. */
     @PutMapping("/{id}/reflection")
     public ResponseEntity<ReflectionView> saveMine(@AuthenticationPrincipal UserDetails user, @PathVariable Long id,
             @RequestBody StudentPart part) {

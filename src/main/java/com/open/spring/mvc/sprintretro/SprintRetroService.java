@@ -6,11 +6,10 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -38,11 +37,11 @@ public class SprintRetroService {
     static final int MAX_TEXT = 2000;
     static final int MAX_COMMENT = 1000;
 
-    /** What the student enters: a rank per item id, text per section or prompt key, and ticked checklist ids. */
+    /** What the student enters: a rank per item id and text per section or prompt key. Older rows may also hold checklist ticks, which are ignored. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record StudentPart(Map<String, Integer> ranks, Map<String, String> text, List<String> checks) {
+    public record StudentPart(Map<String, Integer> ranks, Map<String, String> text) {
         static StudentPart empty() {
-            return new StudentPart(Map.of(), Map.of(), List.of());
+            return new StudentPart(Map.of(), Map.of());
         }
     }
 
@@ -52,6 +51,10 @@ public class SprintRetroService {
         static TeacherPart empty() {
             return new TeacherPart(Map.of(), Map.of(), null);
         }
+    }
+
+    /** One sprint as the school calendar defines it (_data/school_calendar.yml in Pages). */
+    public record CalendarSprint(String name, LocalDate startDate, LocalDate endDate) {
     }
 
     /** A sprint as the API returns it. */
@@ -134,6 +137,32 @@ public class SprintRetroService {
         sprint.setCreatedBy(teacher);
         sprint.setCreatedAt(LocalDateTime.now(clock));
         return SprintView.of(sprintRepository.save(sprint));
+    }
+
+    /**
+     * Makes the stored sprints match the school calendar, matching by name so reflections stay
+     * attached, and returns every sprint. A row is written only when it is new or its dates moved.
+     * Sprints the calendar does not list are left alone so no student work is lost.
+     */
+    @Transactional
+    public List<SprintView> syncCalendar(Person teacher, List<CalendarSprint> calendar) {
+        if (calendar == null || calendar.isEmpty()) {
+            throw new InvalidRetroException("the calendar lists no sprints");
+        }
+        Map<String, SprintRetroEntity> byName = new LinkedHashMap<>();
+        sprintRepository.findAllByOrderByStartDateAscIdAsc().forEach(sprint -> byName.putIfAbsent(sprint.getName(), sprint));
+        for (CalendarSprint entry : calendar) {
+            String name = trim(entry.name());
+            SprintRetroEntity existing = name == null ? null : byName.get(name);
+            if (existing == null) {
+                createSprint(teacher, entry.name(), entry.startDate(), entry.endDate());
+            } else if (!Objects.equals(existing.getStartDate(), entry.startDate())
+                    || !Objects.equals(existing.getEndDate(), entry.endDate())) {
+                apply(existing, entry.name(), entry.startDate(), entry.endDate());
+                sprintRepository.save(existing);
+            }
+        }
+        return sprints();
     }
 
     /** Renames or re-dates a sprint; empty when there is no sprint with that id. */
@@ -239,7 +268,7 @@ public class SprintRetroService {
 
     // ---------- validation ----------
 
-    /** Checks a student's part and returns it with blanks, zero ranks and duplicate checks removed. */
+    /** Checks a student's part and returns it with blanks and zero ranks removed. */
     static StudentPart validate(StudentPart part) {
         if (part == null) {
             throw new InvalidRetroException("reflection is required");
@@ -263,18 +292,8 @@ public class SprintRetroService {
                 text.put(key, clean);
             });
         }
-        Set<String> checks = new LinkedHashSet<>();
-        if (part.checks() != null) {
-            for (String id : part.checks()) {
-                if (!SprintRetroTemplate.CHECK_IDS.contains(id)) {
-                    problems.add("unknown checklist item " + id);
-                } else {
-                    checks.add(id);
-                }
-            }
-        }
         throwIfAny(problems);
-        return new StudentPart(ranks, text, List.copyOf(checks));
+        return new StudentPart(ranks, text);
     }
 
     /** Checks a teacher's part and returns it with blanks and zero ranks removed. */
@@ -383,8 +402,7 @@ public class SprintRetroService {
             return StudentPart.empty();
         }
         StudentPart part = read(reflection.getStudentData(), StudentPart.class);
-        return new StudentPart(orEmpty(part.ranks()), orEmpty(part.text()),
-                part.checks() == null ? List.of() : part.checks());
+        return new StudentPart(orEmpty(part.ranks()), orEmpty(part.text()));
     }
 
     private TeacherPart readTeacher(SprintReflectionEntity reflection) {
