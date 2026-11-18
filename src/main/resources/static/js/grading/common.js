@@ -173,7 +173,7 @@ window.Grading = (function () {
    */
   function submissionDetailHtml(s, submitter, points) {
     const field = (label, value) => `<div class="g-panel"><div class="g-sub mb-1">${label}</div>
-      <div style="white-space:pre-wrap;word-break:break-word">${esc(value == null || value === '' ? 'Not provided' : value)}</div></div>`;
+      <div style="white-space:pre-wrap;word-break:break-word">${value == null || value === '' ? 'Not provided' : linkify(value)}</div></div>`;
     return `
       <div class="g-stats">
         <div class="g-stat"><b>${esc(submitter)}</b><span>submitter</span></div>
@@ -198,6 +198,148 @@ window.Grading = (function () {
         · Instructor grade: <b>${esc(grading.manualOverride ? formatGrade(grading.manualGrade, points) : '—')}</b></div></div>`;
   }
 
+  // ---------- links and progress ----------
+  /** Escapes text and turns http(s) URLs in it into links that open in a new tab. */
+  function linkify(text) {
+    return esc(text).replace(/https?:\/\/[^\s<>"']+/g, raw => {
+      const url = raw.replace(/[.,;:!?)\]]+$/, '');
+      return `<a href="${url}" target="_blank" rel="noopener">${url}</a>${raw.slice(url.length)}`;
+    });
+  }
+
+  /** A progress bar: determinate when total is given, otherwise indeterminate (busy). */
+  function progressHtml(label, done, total) {
+    const known = total != null && total > 0;
+    const pct = known ? Math.min(100, Math.round(done / total * 100)) : 0;
+    return `<div class="g-progress${known ? '' : ' busy'}" role="progressbar" aria-label="${esc(label || 'Loading')}"
+        ${known ? `aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"` : ''}><span style="${known ? `width:${pct}%` : ''}"></span></div>
+      ${label ? `<div class="g-progress-label">${esc(label)}</div>` : ''}`;
+  }
+
+  /** A loading placeholder for a table body or an empty container. */
+  function loadingHtml(label = 'Loading…', colspan) {
+    const inner = `<div class="g-loading">${progressHtml(label)}</div>`;
+    return colspan ? `<tr><td colspan="${colspan}">${inner}</td></tr>` : inner;
+  }
+
+  /** Disables a button and shows a busy bar in it; call the returned function to restore it. */
+  function busy(button, label) {
+    const html = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = `${esc(label || button.textContent)}<div class="g-progress busy"><span></span></div>`;
+    return () => { button.innerHTML = html; button.disabled = false; };
+  }
+
+  // ---------- revision history (shared by the tracker and the student card) ----------
+  /** Line diff of two texts (LCS), as [{type: 'same'|'add'|'del', line}]. */
+  function lineDiff(before, after) {
+    const a = String(before ?? '').split('\n');
+    const b = String(after ?? '').split('\n');
+    if (a.length * b.length > 250000) {
+      return [...a.map(line => ({ type: 'del', line })), ...b.map(line => ({ type: 'add', line }))];
+    }
+    const lcs = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let i = a.length - 1; i >= 0; i--) {
+      for (let j = b.length - 1; j >= 0; j--) {
+        lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      }
+    }
+    const out = [];
+    let i = 0, j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { out.push({ type: 'same', line: a[i] }); i++; j++; }
+      else if (lcs[i + 1][j] >= lcs[i][j + 1]) out.push({ type: 'del', line: a[i++] });
+      else out.push({ type: 'add', line: b[j++] });
+    }
+    while (i < a.length) out.push({ type: 'del', line: a[i++] });
+    while (j < b.length) out.push({ type: 'add', line: b[j++] });
+    return out;
+  }
+
+  function diffHtml(before, after) {
+    const marks = { same: '  ', add: '+ ', del: '- ' };
+    return `<div class="g-panel g-diff">${lineDiff(before, after)
+      .map(d => `<span class="${d.type}">${esc(marks[d.type] + d.line)}</span>`).join('')}</div>`;
+  }
+
+  function restoreVersion(submissionId, version) {
+    return postJson(`/api/submissions/${submissionId}/history/restore`,
+      { submissionId: version.submissionId, revision: version.revision });
+  }
+
+  /**
+   * Shows a submission's versions like GitHub revisions: a dropdown (newest selected), the chosen
+   * version, an optional diff against the version before it, and "Restore this version", which
+   * submits the old content as a new revision. {@code onRestored} runs after a restore.
+   */
+  async function showHistory(target, submissionId, { submitter, points, canRestore = true, onRestored } = {}) {
+    target.innerHTML = loadingHtml('Loading history…');
+    let history;
+    try {
+      history = await api(`/api/submissions/${submissionId}/history`);
+    } catch (e) {
+      target.innerHTML = `<div class="g-sub">Could not load history: ${esc(e.message)}</div>`;
+      return;
+    }
+    const versions = history.versions;
+    const scale = history.points ?? points;
+    const when = v => v ? new Date(v).toLocaleString() : null;
+    const label = (v, i) => {
+      const name = v.current ? `Revision ${versions.length} (current)` : `Revision ${versions.length - i}`;
+      const at = when(v.submittedAt);
+      return at ? `${name} · ${at}` : name;
+    };
+    target.innerHTML = `
+      <div class="g-toolbar">
+        <select data-h="pick" aria-label="Revision">${versions.map((v, i) => `<option value="${i}">${esc(label(v, i))}</option>`).join('')}</select>
+        <label class="g-sub mb-0"><input type="checkbox" data-h="diff"> Compare with previous</label>
+        <button class="g-btn" type="button" data-h="restore">Restore this version</button>
+        <span class="g-sub mb-0">${versions.length} version${versions.length === 1 ? '' : 's'}</span>
+      </div>
+      <div data-h="body"></div>`;
+    const pick = target.querySelector('[data-h=pick]');
+    const diff = target.querySelector('[data-h=diff]');
+    const restore = target.querySelector('[data-h=restore]');
+    const closed = !!history.closed;
+    // Key order differs between the stored row and history events, so compare with sorted keys.
+    const same = (x, y) => {
+      const stable = v => v && typeof v === 'object' && !Array.isArray(v)
+        ? Object.keys(v).sort().reduce((o, k) => { o[k] = stable(v[k]); return o; }, {}) : v;
+      return JSON.stringify(stable(x ?? null)) === JSON.stringify(stable(y ?? null));
+    };
+    function render() {
+      const i = Number(pick.value);
+      const v = versions[i];
+      const previous = versions[i + 1];
+      const matchesCurrent = !v.current && same(v.content, versions[0].content);
+      restore.style.display = v.current || matchesCurrent || !canRestore || closed ? 'none' : '';
+      diff.disabled = !previous;
+      const replaced = (v.replacedAt ? `<div class="g-sub">Replaced ${esc(when(v.replacedAt))}</div>` : '')
+        + (matchesCurrent ? '<div class="g-sub">Same as the current version.</div>' : '');
+      const changes = diff.checked && previous
+        ? `<div class="g-sub mb-1">Changes from ${esc(label(previous, i + 1))}</div>${diffHtml(contentText(previous.content), contentText(v.content))}`
+        : '';
+      target.querySelector('[data-h=body]').innerHTML = replaced + changes + submissionDetailHtml(v, submitter, scale);
+    }
+    pick.addEventListener('change', render);
+    diff.addEventListener('change', render);
+    restore.addEventListener('click', async () => {
+      const v = versions[Number(pick.value)];
+      if (!confirm('Restore this version? It is submitted again as a new revision; nothing in the history is deleted.')) return;
+      const done = busy(restore, 'Restoring…');
+      try {
+        const result = await restoreVersion(history.submissionId, v);
+        toast(gradingOutcomeText(result.outcome));
+        if (onRestored) await onRestored(result);
+        await showHistory(target, submissionId, { submitter, points, canRestore, onRestored });
+      } catch (e) {
+        toast(e.message, false);
+        done();
+      }
+    });
+    render();
+  }
+
   let toastTimer;
   function toast(message, ok = true) {
     let el = document.getElementById('g-toast');
@@ -216,5 +358,6 @@ window.Grading = (function () {
 
   return { esc, api, postJson, formatEta, formatPct, formatGrade, statusBadge, pctClass, debounce, toast,
     contentText, submissionDetailHtml, gradingOutcomeText, saveManualGrade, clearManualGrade, requestAiGrade,
-    gradeSourceBadge, closeAssignment, reviews, REVIEW_REASONS, REVIEW_DECISIONS, SIMILARITY_BASIS };
+    gradeSourceBadge, closeAssignment, reviews, REVIEW_REASONS, REVIEW_DECISIONS, SIMILARITY_BASIS,
+    linkify, progressHtml, loadingHtml, busy, diffHtml, showHistory };
 })();

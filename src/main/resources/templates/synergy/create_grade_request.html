@@ -51,7 +51,7 @@
     const currentPersonId = /*[[${currentPersonId}]]*/ 0;
     const currentName = /*[[${currentName}]]*/ '';
     const preselect = /*[[${preselectAssignmentId}]]*/ null;
-    const { esc, api, postJson, formatGrade, statusBadge, debounce, toast } = window.Grading;
+    const { esc, api, postJson, formatGrade, statusBadge, debounce, toast, loadingHtml } = window.Grading;
 
     let student = isStaff ? null : { id: currentPersonId, name: currentName };
     let submissions = [];
@@ -66,7 +66,7 @@
             assignmentRows.innerHTML = '<tr><td class="g-empty">Pick a student first.</td></tr>';
             return;
         }
-        assignmentRows.innerHTML = '<tr><td class="g-empty">Loading…</td></tr>';
+        assignmentRows.innerHTML = loadingHtml('Loading assignments…', 1);
         try {
             const card = await api(`/api/synergy/gradebook/students/${student.id}`);
             // One row per assignment, even if it was submitted more than once.

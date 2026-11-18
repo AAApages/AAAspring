@@ -461,6 +461,60 @@ public class AssignmentSubmissionAPIController {
         return ResponseEntity.ok(historyService.historyOf(current));
     }
 
+    /** Names one earlier version from the history: its submissionId, and its revision (null for an older row). */
+    public record RestoreRequest(Long submissionId, Integer revision) {
+    }
+
+    /**
+     * Restores an earlier version: its content is submitted again as the next revision of the
+     * current submission (like a revert commit), so nothing in the history is lost and any manual
+     * grade carries over. Same access as editing; refused once the assignment is closed. Not
+     * transactional, so no transaction is open during the AI re-grade.
+     */
+    @PostMapping("/{submissionId}/history/restore")
+    public ResponseEntity<?> restoreSubmissionVersion(
+            @PathVariable Long submissionId,
+            @RequestBody RestoreRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        Person currentUser = getAuthenticatedPerson(userDetails);
+        if (currentUser == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Authentication required"));
+        }
+        AssignmentSubmission submission = submissionRepo.findById(submissionId).orElse(null);
+        if (submission == null || request == null) {
+            return GradingResponse.from(GradingResult.notFound());
+        }
+        AssignmentSubmission current = historyService.currentOf(submission);
+        if (!canEditSubmission(currentUser, current)) {
+            return GradingResponse.from(GradingResult.notPermitted());
+        }
+        Map<String, Object> content = historyService
+                .earlierVersionContent(current.getId(), request.submissionId(), request.revision()).orElse(null);
+        if (content == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "That version is not in this submission's history"));
+        }
+        loadAssignment(current);
+        // The same rules as a submit or edit: the assignment's type (or its link rules) may have
+        // changed since that version was submitted.
+        if (!hasSubmissionType(content, current.getAssignment())) {
+            Assignment assignment = current.getAssignment();
+            return ResponseEntity.badRequest().body(Map.of("error", "That version is a " + content.get("type")
+                    + " submission, but this assignment now takes "
+                    + (assignment == null ? "no submissions" : assignment.getAssignmentType()) + "; submit new work instead"));
+        }
+        String linkError = validateLinkContent(content);
+        if (linkError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", linkError));
+        }
+        GradingResult result = gradingService.revise(current, new HashMap<>(content), currentUser);
+        if (result.outcome() == GradingOutcome.REVISION_CREATED) {
+            aiGrader.autoGrade(current);
+        }
+        return GradingResponse.from(result);
+    }
+
     /** Grading history, oldest first, for the submission's graders and its submitter. */
     @GetMapping("/{submissionId}/grading-history")
     @Transactional

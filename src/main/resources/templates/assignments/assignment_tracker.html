@@ -50,7 +50,7 @@
                     <th>Rubric</th>
                 </tr>
             </thead>
-            <tbody id="assignmentRows"><tr><td colspan="6" class="g-empty">Loading…</td></tr></tbody>
+            <tbody id="assignmentRows"><tr><td colspan="6"><div class="g-loading"><div class="g-progress busy"><span></span></div><div class="g-progress-label">Loading assignments…</div></div></td></tr></tbody>
         </table>
     </div>
 </div>
@@ -104,13 +104,14 @@
 
         <!-- Edit assignment -->
         <section data-panel="edit">
+            <div class="g-sub" id="editClosedNote" style="display:none">This assignment is closed, so its details are locked: points and type decide the final grades.</div>
             <form id="editForm" class="g-two-col">
                 <label>Name<br><input type="text" id="editName" class="w-100" required></label>
                 <label>Category (type)<br><input type="text" id="editType" class="w-100" required></label>
                 <label>Points<br><input type="number" id="editPoints" class="w-100" min="0" step="any" required></label>
                 <label>Due date<br><input type="date" id="editDue" class="w-100" required></label>
                 <label>Submission type<br><select id="editSubmissionType" class="w-100"></select></label>
-                <span></span>
+                <label>Content URL (lesson page path)<br><input type="text" id="editContentUrl" class="w-100" placeholder="csa/lesson-page"></label>
                 <label style="grid-column:1/-1">Description<br><textarea id="editDescription" rows="3"></textarea></label>
                 <div style="grid-column:1/-1">
                     <button class="g-btn primary" type="submit">Save changes</button>
@@ -127,6 +128,7 @@
                 <button class="g-btn" type="button" id="regenRubric">Regenerate with AI</button>
                 <span class="g-sub" id="rubricStatus"></span>
             </div>
+            <div class="g-sub mt-2" id="rubricClosedNote" style="display:none">Closed: grades are final, so the rubric no longer affects anything.</div>
             <div class="g-sub mt-2">A usable rubric has at least two "Score N" tiers, with the top tier at 90% of the points. Anything else is replaced by the AI.</div>
         </section>
 

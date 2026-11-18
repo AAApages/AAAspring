@@ -9,8 +9,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.open.spring.mvc.lessonfeedback.LessonFeedbackService;
 import com.open.spring.mvc.person.Person;
@@ -131,9 +133,12 @@ public class AssignmentSubmissionHistoryService {
             String feedback, String aiSummary, Integer qualityScore, LocalDateTime gradedAt) {
     }
 
-    /** Every version of a submission, the current one first, then newest to oldest. */
+    /**
+     * Every version of a submission, the current one first, then newest to oldest. {@code closed}
+     * means the assignment is closed, so no version can be restored.
+     */
     public record SubmissionHistory(Long submissionId, Long assignmentId, String assignmentName, Double points,
-            List<Version> versions) {
+            List<Version> versions, boolean closed) {
     }
 
     /**
@@ -168,7 +173,26 @@ public class AssignmentSubmissionHistoryService {
         Assignment assignment = current.getAssignment();
         return new SubmissionHistory(current.getId(), assignment == null ? null : assignment.getId(),
                 assignment == null ? "(deleted assignment)" : assignment.getName(),
-                assignment == null ? null : assignment.getPoints(), versions);
+                assignment == null ? null : assignment.getPoints(), versions,
+                assignment != null && assignment.isClosed());
+    }
+
+    /**
+     * The content of one earlier version of {@code current}, named by the {@link Version}'s
+     * submissionId and revision (revision is null for an older duplicate row). Empty if there is no
+     * such earlier version. Restoring submits this content again as a new revision, so the history
+     * is never rewritten.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Map<String, Object>> earlierVersionContent(Long currentId, Long versionSubmissionId, Integer revision) {
+        return submissionRepo.findById(currentId)
+                .map(this::historyOf)
+                .flatMap(history -> history.versions().stream()
+                        .filter(version -> !version.current())
+                        .filter(version -> Objects.equals(version.submissionId(), versionSubmissionId)
+                                && Objects.equals(version.revision(), revision))
+                        .findFirst())
+                .map(Version::content);
     }
 
     /**

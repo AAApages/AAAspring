@@ -13,7 +13,7 @@
     <h2>Gradebook</h2>
     <div class="g-sub">Overall grades from OCS assignment submissions. Open a student to see and edit their grades.</div>
 
-    <div class="g-panel" id="queueBanner">Loading AI grading queue…</div>
+    <div class="g-panel" id="queueBanner"><div class="g-loading"><div class="g-progress busy"><span></span></div><div class="g-progress-label">Loading AI grading queue…</div></div></div>
 
     <div class="g-tabs" id="courseTabs" role="tablist">
         <button class="g-tab" th:each="course : ${courses}" th:text="${course}" th:attr="data-course=${course}"
@@ -40,7 +40,7 @@
 <script th:src="@{/js/grading/common.js}"></script>
 <script>
 (function () {
-    const { esc, api, formatPct, formatEta, pctClass, debounce } = window.Grading;
+    const { esc, api, formatPct, formatEta, pctClass, debounce, loadingHtml } = window.Grading;
     const grid = document.getElementById('studentGrid');
     const search = document.getElementById('studentSearch');
     const sortBy = document.getElementById('sortBy');
@@ -54,7 +54,7 @@
     async function loadCourse(course) {
         tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.course === course));
         try { localStorage.setItem('gradebook.course', course); } catch (e) { /* storage unavailable */ }
-        grid.innerHTML = '<div class="g-empty">Loading students…</div>';
+        grid.innerHTML = loadingHtml('Loading students…');
         try {
             students = await api(`/api/synergy/gradebook/students?course=${encodeURIComponent(course)}`);
             render();

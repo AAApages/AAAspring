@@ -120,3 +120,20 @@
   .g-two-col { grid-template-columns: 1fr !important; }
 }
 .g-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* Progress bars: determinate (.g-progress > span with a width) or indeterminate (.g-progress.busy). */
+.g-progress { position: relative; height: 6px; border-radius: 999px; background: var(--g-panel-strong); overflow: hidden; margin: 6px 0; }
+.g-progress > span { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--g-accent); border-radius: inherit; transition: width .2s; }
+.g-progress.busy > span { width: 35%; animation: g-progress-slide 1.1s ease-in-out infinite; }
+.g-progress-label { color: var(--g-muted); font-size: 0.85rem; }
+.g-btn .g-progress { height: 3px; margin: 3px 0 0; }
+.g-loading { padding: 18px 24px; max-width: 360px; margin: 0 auto; text-align: center; }
+@keyframes g-progress-slide { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .g-progress.busy > span { animation: none; width: 100%; opacity: .5; } }
+
+/* Revision diff */
+.g-diff { font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
+.g-diff .add { background: rgba(46, 204, 113, 0.15); color: var(--g-ok); display: block; }
+.g-diff .del { background: rgba(231, 76, 60, 0.15); color: var(--g-bad); display: block; text-decoration: line-through; }
+.g-diff .same { color: var(--g-muted); display: block; }
+.grading a, .g-modal a { word-break: break-word; }
