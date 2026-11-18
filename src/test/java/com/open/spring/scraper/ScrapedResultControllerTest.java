@@ -60,7 +60,7 @@ class ScrapedResultControllerTest {
         owner = person(1L, "music-scraper");
         otherStudent = person(2L, "someone-else");
         teacher = person(3L, "the-teacher");
-        teacher.setRoles(List.of(new com.open.spring.mvc.person.PersonRole("ROLE_TEACHER")));
+        teacher.setRoles(new java.util.ArrayList<>(List.of("ROLE_TEACHER")));
         when(personRepo.findByUid("music-scraper")).thenReturn(owner);
         when(personRepo.findByUid("someone-else")).thenReturn(otherStudent);
         when(personRepo.findByUid("the-teacher")).thenReturn(teacher);

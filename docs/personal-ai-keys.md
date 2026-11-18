@@ -94,8 +94,9 @@ Configure these in the environment of the Spring process, or its ignored `.env`:
 | Setting | Requirement |
 | --- | --- |
 | `AI_KEY_ENCRYPTION_KEY` | Stable Base64-encoded 32-byte key; required only for personal-key storage |
-| `GROQ_GRADING_MODEL` | An available, school-approved Groq chat model supporting JSON output; required to enable either personal or system Groq grading |
+| `GROQ_GRADING_MODEL` | Defaults to `llama-3.1-8b-instant` for personal and system Groq grading; override with an available, school-approved model supporting JSON output. Explicitly blank disables Groq. |
 | `GROQ_API_KEY` | Optional system Groq credential, used last |
+| `GROQ_SERVER` / `groq.api.url` | Groq chat-completions endpoint for personal and system requests; defaults to `https://api.groq.com/openai/v1/chat/completions` |
 | `gemini.api.key` | Existing system Gemini configuration; retain it for the third fallback |
 | `gemini.api.url` | Existing Gemini grading model endpoint; applies to personal and system Gemini requests |
 
@@ -129,15 +130,18 @@ then deploy the backend before Pages. No frontend secrets or Flask changes are r
    securely as a single Base64 value, use the same value on every Spring instance, and
    retain it across releases. Do not paste it into a PR or logs. Back it up separately
    from the database; loss or replacement requires users to reconnect their AI keys.
-3. Set `GROQ_GRADING_MODEL=qwen/qwen3.8-27b` to match the local test configuration,
-   provided that model is available to the intended accounts. This is a model ID, not
-   a secret. Without a model setting, both personal and system Groq grading are skipped
-   and Groq connection controls are disabled.
+3. Groq grading defaults to `llama-3.1-8b-instant`. Optionally set
+   `GROQ_GRADING_MODEL=llama-3.1-8b-instant` explicitly, or choose another model available
+   to the intended accounts. This is a model ID, not a secret. An explicitly blank value
+   skips both personal and system Groq grading and disables Groq connection controls.
 4. Optionally configure `GROQ_API_KEY` for the final system fallback. Personal Groq keys
    do not require a system Groq key. Retain the existing `gemini.api.key` system setting
    (normally supplied by `GEMINI_API_KEY`) and verify `gemini.api.url`/`GEMINI_API_URL`
    targets an available model. Personal Gemini also uses that configured endpoint.
    Provider billing, model access, and quota must be valid independently of OCS settings.
+   `GROQ_SERVER` (Spring property `groq.api.url`) defaults to
+   `https://api.groq.com/openai/v1/chat/completions` for both personal and system requests;
+   metadata validation uses `/models` under that same API base.
 5. Preserve the existing database and `GIST_TOKEN_ENCRYPTION_KEY`. Take a secure native
    database backup; ensure Spring can create `ai_connections` at startup. No database
    reset, manual schema replacement, JWT-secret change, Pages-bot change, or Flask update

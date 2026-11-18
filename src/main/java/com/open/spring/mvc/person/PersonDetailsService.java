@@ -43,11 +43,11 @@ public class PersonDetailsService implements UserDetailsService {  // "implement
 		    throw new UsernameNotFoundException("User not found with username: " + uid);
         }
         Collection<SimpleGrantedAuthority> authorities = new ArrayList<>();
-        person.getRoles().forEach(role -> { //loop through roles
-            if (role == null || role.getName() == null || role.getName().isBlank()) {
+        person.getRoles().forEach(roleName -> { //loop through roles
+            if (roleName == null || roleName.isBlank()) {
                 return;
             }
-            authorities.add(new SimpleGrantedAuthority(normalizeRoleName(role.getName()))); //create a SimpleGrantedAuthority by passed in role, adding it all to the authorities list, list of roles gets past in for spring security
+            authorities.add(new SimpleGrantedAuthority(normalizeRoleName(roleName))); //create a SimpleGrantedAuthority by passed in role, adding it all to the authorities list, list of roles gets past in for spring security
         });
         // train spring security to User and Authorities
         User user = new User(person.getUid(), person.getPassword(), authorities);
@@ -145,7 +145,7 @@ public class PersonDetailsService implements UserDetailsService {  // "implement
             if (person.getRoles().isEmpty()) {
                 PersonRole role = personRoleJpaRepository.findByName(roleName);
                 if (role != null) { // verify role
-                    person.getRoles().add(role);
+                    person.setRoles(new ArrayList<>(List.of(role.getName())));
                 }
             }
         }
@@ -164,18 +164,48 @@ public class PersonDetailsService implements UserDetailsService {  // "implement
         Person person = personJpaRepository.findByUid(uid);
         if (person != null) { // verify person
             PersonRole role = personRoleJpaRepository.findByName(roleName);
-            if (role != null) { // verify role
-                boolean addRole = true;
-                for (PersonRole roleObj : person.getRoles()) { // only add if user is missing role
-                    if (roleObj.getName().equals(roleName)) {
-                        addRole = false;
-                        break;
-                    }
-                }
-                if (addRole)
-                    person.getRoles().add(role); // everything is valid for adding role
+            if (role != null && !person.hasRole(role.getName())) { // verify role, and only add if user is missing it
+                // A new list, not an add to the old one: a change inside a stored list may not be seen as a change
+                List<String> updated = new ArrayList<>(person.getRoles());
+                updated.add(role.getName());
+                person.setRoles(updated);
+                personJpaRepository.save(person);
             }
         }
+    }
+
+    /**
+     * The role with this name, made the first time it is needed. A role is a row in person_role, not a change to
+     * the schema, so a new role needs no database step.
+     */
+    public PersonRole findOrCreateRole(String roleName) {
+        PersonRole role = personRoleJpaRepository.findByName(roleName);
+        return role != null ? role : personRoleJpaRepository.save(new PersonRole(roleName));
+    }
+
+    /**
+     * Gives the person this role, or takes it away, and says whether there is such a person. Giving a role they
+     * have, or taking one they do not, changes nothing.
+     */
+    public boolean setRole(String uid, String roleName, boolean granted) {
+        Person person = personJpaRepository.findByUid(uid);
+        if (person == null) {
+            return false;
+        }
+        boolean has = person.hasRole(roleName);
+        if (granted && !has) {
+            findOrCreateRole(roleName);  // the catalogue the admin page lists
+            List<String> updated = new ArrayList<>(person.getRoles());
+            updated.add(roleName);
+            person.setRoles(updated);
+            personJpaRepository.save(person);
+        } else if (!granted && has) {
+            List<String> updated = new ArrayList<>(person.getRoles());
+            updated.removeIf(roleName::equals);
+            person.setRoles(updated);
+            personJpaRepository.save(person);
+        }
+        return true;
     }
 
     public boolean existsByUid(String uid) {  // check if uid in db

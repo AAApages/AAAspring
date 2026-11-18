@@ -123,9 +123,17 @@ class AssignmentsApiControllerCreatorTest {
             UserDetails caller,
             List<String> creatorUids,
             List<String> courseCodes) {
+        return autoCreate(caller, creatorUids, courseCodes, null);
+    }
+
+    private ResponseEntity<?> autoCreate(
+            UserDetails caller,
+            List<String> creatorUids,
+            List<String> courseCodes,
+            Boolean teamTeach) {
         return controller.autoCreateAssignment(
             "Sample Assignment", CONTENT_URL, "", null, null,
-            null, null, creatorUids, courseCodes, caller);
+            null, null, creatorUids, courseCodes, teamTeach, caller);
     }
 
     @SuppressWarnings("unchecked")
@@ -148,7 +156,7 @@ class AssignmentsApiControllerCreatorTest {
     void aPageDescriptionIsStoredWithoutTheLegacyContentUrlMarker() {
         controller.autoCreateAssignment(
             "Sample Assignment", CONTENT_URL, "  Play the game  ",
-            null, null, null, null, null, null, caller("admin", "ROLE_ADMIN"));
+            null, null, null, null, null, null, null, caller("admin", "ROLE_ADMIN"));
 
         ArgumentCaptor<Assignment> saved = ArgumentCaptor.forClass(Assignment.class);
         verify(assignmentRepo).save(saved.capture());
@@ -295,6 +303,41 @@ class AssignmentsApiControllerCreatorTest {
 
         ResponseEntity<?> response = autoCreate(
             caller("sneaky-student", "ROLE_STUDENT"), null, List.of("CSA"));
+
+        assertEquals(403, response.getStatusCode().value());
+        verify(assignmentRepo, never()).save(any(Assignment.class));
+    }
+
+    @Test
+    void syncUserMarksANewAssignmentTeamTaught() {
+        ResponseEntity<?> response = autoCreate(
+            caller("pages-bot", "ROLE_ASSIGNMENT_SYNC"), List.of("AdityaS-2010"), null, true);
+
+        assertEquals(201, response.getStatusCode().value());
+        assertTrue(((AssignmentDto) response.getBody()).isTeamTeach());
+    }
+
+    @Test
+    void syncUserClearsTeamTeachWhenThePageDropsIt() {
+        Assignment existing = assignment(10L, "pilot", firstCreator);
+        existing.setContentUrl(CANONICAL_CONTENT_URL);
+        existing.setTeamTeach(true);
+        when(assignmentRepo.findFirstByContentUrlOrderByIdAsc(CANONICAL_CONTENT_URL)).thenReturn(existing);
+
+        ResponseEntity<?> response = autoCreate(
+            caller("pages-bot", "ROLE_ASSIGNMENT_SYNC"), List.of("AdityaS-2010"), null, false);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertFalse(existing.getTeamTeach());
+        verify(assignmentRepo).save(existing);
+    }
+
+    @Test
+    void aStudentCannotTurnOffTeamTeach() {
+        Person attacker = student(7L, "sneaky-student");
+        when(personRepo.findByUid("sneaky-student")).thenReturn(attacker);
+
+        ResponseEntity<?> response = autoCreate(caller("sneaky-student", "ROLE_STUDENT"), null, null, false);
 
         assertEquals(403, response.getStatusCode().value());
         verify(assignmentRepo, never()).save(any(Assignment.class));

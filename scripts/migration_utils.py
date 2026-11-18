@@ -102,7 +102,7 @@ class SpringBootSchemaRunner:
     def run(self, timeout_seconds: int = 180, settle_seconds: int = 5) -> None:
         process = self._start()
         try:
-            self._wait_for_start(timeout_seconds, settle_seconds)
+            self._wait_for_start(process, timeout_seconds, settle_seconds)
         finally:
             self._stop(process)
 
@@ -122,11 +122,18 @@ class SpringBootSchemaRunner:
             preexec_fn=os.setsid,
         )
 
-    def _wait_for_start(self, timeout_seconds: int, settle_seconds: int) -> None:
+    def _wait_for_start(
+        self, process: subprocess.Popen, timeout_seconds: int, settle_seconds: int
+    ) -> None:
         print("Waiting for Spring Boot", end="", flush=True)
         start_time = time.time()
 
         while time.time() - start_time < timeout_seconds:
+            if process.poll() is not None:
+                raise MigrationError(
+                    f"Application exited with status {process.returncode} before port "
+                    f"{self.spring_port} became available. Check {self.log_file} for errors"
+                )
             if is_port_in_use(self.spring_port):
                 print(" OK")
                 time.sleep(settle_seconds)
@@ -142,6 +149,9 @@ class SpringBootSchemaRunner:
         try:
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
             process.wait(timeout=10)
+        except ProcessLookupError:
+            process.wait()
+            return
         except subprocess.TimeoutExpired:
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
             process.wait()

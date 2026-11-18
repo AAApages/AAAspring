@@ -30,6 +30,7 @@ class GradingResponseTest {
                 Map.entry(GradingOutcome.ASSIGNMENT_CLOSED, HttpStatus.CONFLICT),
                 Map.entry(GradingOutcome.ASSIGNMENT_FINALIZED, HttpStatus.OK),
                 Map.entry(GradingOutcome.ASSIGNMENT_NOT_FOUND, HttpStatus.NOT_FOUND),
+                Map.entry(GradingOutcome.LESSON_FEEDBACK_REQUIRED, HttpStatus.CONFLICT),
                 Map.entry(GradingOutcome.REVIEW_REQUIRES_CLOSE, HttpStatus.CONFLICT),
                 Map.entry(GradingOutcome.REVIEW_OPENED, HttpStatus.CREATED),
                 Map.entry(GradingOutcome.REVIEW_ALREADY_OPEN, HttpStatus.CONFLICT),

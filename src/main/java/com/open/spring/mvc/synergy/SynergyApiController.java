@@ -96,7 +96,7 @@ public class SynergyApiController {
     }
 
     private static boolean isStaff(Person person) {
-        return person.hasRoleWithName("ROLE_TEACHER") || person.hasRoleWithName("ROLE_ADMIN");
+        return person.hasRole("ROLE_TEACHER") || person.hasRole("ROLE_ADMIN");
     }
 
     private Person currentPerson(UserDetails userDetails) {

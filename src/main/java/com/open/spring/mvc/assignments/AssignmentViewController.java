@@ -50,7 +50,7 @@ public class AssignmentViewController {
         String uid = userDetails.getUsername();
         Person user = personRepository.findByUid(uid);
         
-        if (user == null || (!user.hasRoleWithName("ROLE_TEACHER") && !user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (user == null || (!user.hasRole("ROLE_TEACHER") && !user.hasRole("ROLE_ADMIN"))) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN, "You must be a teacher or admin to access the assignment tracker"
             );
@@ -67,7 +67,7 @@ public class AssignmentViewController {
 
         String uid = userDetails.getUsername();
         Person user = personRepository.findByUid(uid);
-        if (user == null || (!user.hasRoleWithName("ROLE_TEACHER") && !user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (user == null || (!user.hasRole("ROLE_TEACHER") && !user.hasRole("ROLE_ADMIN"))) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN, "You must be a teacher or admin to access the assignment tracker"
             );
@@ -95,7 +95,7 @@ public class AssignmentViewController {
 
         String uid = userDetails.getUsername();
         Person user = personRepository.findByUid(uid);
-        if (user == null || (!user.hasRoleWithName("ROLE_TEACHER") && !user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (user == null || (!user.hasRole("ROLE_TEACHER") && !user.hasRole("ROLE_ADMIN"))) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN, "You must be a teacher or admin to create assignments"
             );
@@ -152,7 +152,7 @@ public class AssignmentViewController {
 
         String uid = userDetails.getUsername();
         Person user = personRepository.findByUid(uid);
-        if (user == null || (!user.hasRoleWithName("ROLE_TEACHER") && !user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (user == null || (!user.hasRole("ROLE_TEACHER") && !user.hasRole("ROLE_ADMIN"))) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN, "You must be a teacher or admin to access assignment files"
             );
@@ -206,11 +206,11 @@ public class AssignmentViewController {
         model.addAttribute("assignments", assignments);
 
         // If user is a student, show student view
-        if (user.hasRoleWithName("ROLE_STUDENT")) {
+        if (user.hasRole("ROLE_STUDENT")) {
             return "assignments/student_assignments";
         } 
         // If user is a teacher or admin, show all assignments
-        else if (user.hasRoleWithName("ROLE_TEACHER") || user.hasRoleWithName("ROLE_ADMIN")) {
+        else if (user.hasRole("ROLE_TEACHER") || user.hasRole("ROLE_ADMIN")) {
             return "assignments/teacher_assignments";
         }
 
@@ -241,11 +241,11 @@ public class AssignmentViewController {
         model.addAttribute("assignment", assignment);
 
         // If user is a student, show student view
-        if (user.hasRoleWithName("ROLE_STUDENT")) {
+        if (user.hasRole("ROLE_STUDENT")) {
             return "assignments/student_assignment_details";
         } 
         // If user is a teacher or admin, show detailed view
-        else if (user.hasRoleWithName("ROLE_TEACHER") || user.hasRoleWithName("ROLE_ADMIN")) {
+        else if (user.hasRole("ROLE_TEACHER") || user.hasRole("ROLE_ADMIN")) {
             return "assignments/teacher_assignment_details";
         }
 
@@ -263,7 +263,7 @@ public class AssignmentViewController {
         String uid = userDetails.getUsername();
         Person user = personRepository.findByUid(uid);
         
-        if (user == null || (!user.hasRoleWithName("ROLE_TEACHER") && !user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (user == null || (!user.hasRole("ROLE_TEACHER") && !user.hasRole("ROLE_ADMIN"))) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN, "You must be a teacher or admin to view assignment submissions"
             );

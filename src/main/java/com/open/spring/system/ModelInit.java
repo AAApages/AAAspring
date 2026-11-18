@@ -223,16 +223,11 @@ public class ModelInit {
             for (Person person : personArray) {
                 List<Person> personFound = personDetailsService.list(person.getName(), person.getEmail());
                 if (personFound.isEmpty()) { 
-                    List<PersonRole> updatedRoles = new ArrayList<>();
-                    for (PersonRole role : person.getRoles()) {
-                        PersonRole roleFound = roleJpaRepository.findByName(role.getName());
-                        if (roleFound == null) {
-                            roleJpaRepository.save(role);
-                            roleFound = role;
+                    for (String roleName : person.getRoles()) {  // the catalogue the admin page lists
+                        if (roleJpaRepository.findByName(roleName) == null) {
+                            roleJpaRepository.save(new PersonRole(roleName));
                         }
-                        updatedRoles.add(roleFound);
                     }
-                    person.setRoles(updatedRoles);
                     
                     // Ensure password is not null or empty
                     if (person.getPassword() == null || person.getPassword().isEmpty()) {

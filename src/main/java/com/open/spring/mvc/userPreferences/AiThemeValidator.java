@@ -32,9 +32,16 @@ public final class AiThemeValidator {
         "georgia", "Georgia, 'Times New Roman', Times, serif",
         "source code pro", "'Source Code Pro', monospace");
 
+    /** Button styles the AI may pick, mapped to the values the Preferences form saves. */
+    static final Map<String, String> BUTTON_STYLES = Map.of(
+        "default", "default", "rounded", "rounded-all", "square", "square", "pill", "pill");
+
+    /** The AI may change the text size only a little, so a theme can't make a page hard to read. */
+    static final int MIN_SIZE = 13, MAX_SIZE = 16, DEFAULT_SIZE = 14;
+
     private AiThemeValidator() {}
 
-    /** Returns {name, description, background, text, accent, selection, font, decor}. */
+    /** Returns {name, description, background, text, accent, selection, font, decor, size, buttonStyle}. */
     public static Map<String, Object> clean(JsonNode ai) {
         String bg = hex(ai.path("background").asText(), DEFAULT_BG);
         String text = hex(ai.path("text").asText(), DEFAULT_TEXT);
@@ -51,6 +58,9 @@ public final class AiThemeValidator {
         theme.put("selection", hex(ai.path("selection").asText(), accent));
         theme.put("font", FONTS.getOrDefault(ai.path("font").asText().trim().toLowerCase(), FONTS.get("inter")));
         theme.put("decor", decor(ai.path("decor")));
+        JsonNode size = ai.path("size");
+        theme.put("size", size.isNumber() ? Math.max(MIN_SIZE, Math.min(MAX_SIZE, size.asInt())) : DEFAULT_SIZE);
+        theme.put("buttonStyle", BUTTON_STYLES.getOrDefault(ai.path("buttonStyle").asText().trim().toLowerCase(), "default"));
         return theme;
     }
 

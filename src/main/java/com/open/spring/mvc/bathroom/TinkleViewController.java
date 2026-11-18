@@ -49,7 +49,7 @@ public class TinkleViewController {
         Person user = personRepository.findByUid(email);
 
         // Check if the user exists and has ROLE_ADMIN
-        if (user == null || !user.hasRoleWithName("ROLE_ADMIN")) {
+        if (user == null || !user.hasRole("ROLE_ADMIN")) {
             return "redirect:/access-denied";
         }
 

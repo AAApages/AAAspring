@@ -175,6 +175,11 @@ Indicators:
     @Column(updatable = false)
     private Long closedById;
 
+    // The page's `team_teach: true`, set only by the Pages sync bot. Its homework waits for
+    // the submitter's complete lesson feedback (mvc/lessonfeedback). Null means false.
+    @Column(name = "team_teach")
+    private Boolean teamTeach;
+
     // Optional assignment resource metadata linked to this assignment ID.
     private String resourceType;
     private String resourceUrl;

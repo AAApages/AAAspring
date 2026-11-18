@@ -135,7 +135,7 @@ private CalendarEventJpaRepository calendarEventRepository;
     @GetMapping("/person/{id}")
     public ResponseEntity<PersonEmpty> extractPersonById(@PathVariable("id") long id){
         if(!personJpaRepository.existsById(id)){
-            new ResponseEntity<PersonEmpty>(HttpStatus.NOT_FOUND);
+            return new ResponseEntity<PersonEmpty>(HttpStatus.NOT_FOUND);
         }
         Person person = personJpaRepository.findById(id).get();
         PersonEmpty personEmpty = new PersonEmpty(
@@ -152,22 +152,11 @@ private CalendarEventJpaRepository calendarEventRepository;
     }
 
     @GetMapping("/group/{id}")
-    public ResponseEntity<PersonEmpty> extractGroupById(@PathVariable("id") long id){
-        if(!personJpaRepository.existsById(id)){
-            new ResponseEntity<PersonEmpty>(HttpStatus.NOT_FOUND);
-        }
-        Person person = personJpaRepository.findById(id).get();
-        PersonEmpty personEmpty = new PersonEmpty(
-            person.getId(), 
-            person.getUid(), 
-            person.getPassword(), 
-            person.getEmail(), 
-            person.getName(), 
-            person.getPfp(), 
-            person.getSid(), 
-            person.getKasmServerNeeded(), 
-            person.getStats());
-        return new ResponseEntity<PersonEmpty>(personEmpty,HttpStatus.OK);
+    public ResponseEntity<GroupEmpty> extractGroupById(@PathVariable("id") long id){
+        return groupsJpaRepository.findById(id)
+            .map(group -> new ResponseEntity<GroupEmpty>(
+                new GroupEmpty(group.getId(), group.getName(), group.getPeriod()), HttpStatus.OK))
+            .orElseGet(() -> new ResponseEntity<GroupEmpty>(HttpStatus.NOT_FOUND));
     }
    
 /////////////////////////////////////////

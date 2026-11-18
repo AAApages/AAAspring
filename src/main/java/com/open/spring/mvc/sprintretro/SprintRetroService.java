@@ -123,7 +123,7 @@ public class SprintRetroService {
 
     /** Teachers and admins create sprints and give feedback. */
     public static boolean isTeacher(Person person) {
-        return person.hasRoleWithName("ROLE_TEACHER") || person.hasRoleWithName("ROLE_ADMIN");
+        return person.hasRole("ROLE_TEACHER") || person.hasRole("ROLE_ADMIN");
     }
 
     public List<SprintView> sprints() {

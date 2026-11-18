@@ -1,6 +1,7 @@
 package com.open.spring.mvc.lessonfeedback;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -25,8 +26,8 @@ import org.springframework.web.server.ResponseStatusException;
  * and grows. A rating cannot change once saved, so students cannot revise scores after
  * the fact, and a submission needs complete feedback.
  *
- * The teaching team sees averages and anonymous comments only, and only once enough
- * students have responded that a comment cannot be traced to one classmate.
+ * Teachers see a live summary: averages, how many students gave each rating, and the
+ * comments without names, shuffled so they can't be matched to a student's ratings.
  *
  * These rules are plain functions so they can be tested without a database; the
  * persistence and endpoints will call them.
@@ -36,8 +37,6 @@ public class LessonFeedbackRules {
     public static final int MIN_RATING = 1;
     public static final int MAX_RATING = 5;
     public static final int MAX_TEXT_LENGTH = 1000;
-    /** Fewer responses than this would let the teaching team guess who wrote a comment. */
-    public static final int MIN_RESPONSES_FOR_SUMMARY = 5;
 
     /** One student's saved feedback on one lesson; a null rating or text has not been given yet. */
     public record Feedback(Integer lesson, Integer engage, Integer popcorn, Integer homework, String pros, String grows) {
@@ -50,9 +49,13 @@ public class LessonFeedbackRules {
     /** What the student sends with the submission; null fields are left as they are. */
     public record SubmissionInput(Integer lesson, Integer engage, Integer popcorn, Integer homework, String pros, String grows) {}
 
-    /** What the teaching team sees; averages and comments stay empty until released. */
-    public record Summary(int responseCount, boolean released,
+    /**
+     * What teachers see, from complete feedback only. counts maps each rating to how many
+     * students gave it 1 to 5 (index 0 is a 1). Averages are null before the first response.
+     */
+    public record Summary(int responseCount,
                           Double averageLesson, Double averageEngage, Double averagePopcorn, Double averageHomework,
+                          Map<String, List<Integer>> counts,
                           List<String> pros, List<String> grows) {}
 
     private static final Map<String, Function<Feedback, Integer>> RATINGS = new LinkedHashMap<>();
@@ -118,15 +121,8 @@ public class LessonFeedbackRules {
         }
     }
 
-    /** A member of the teaching team cannot rate their own lesson. */
-    public void requireNotTeachingTeam(Long assessorId, Collection<Long> teachingTeamIds) {
-        if (assessorId != null && teachingTeamIds != null && teachingTeamIds.contains(assessorId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You cannot rate a lesson your team taught.");
-        }
-    }
-
     /**
-     * Summarizes complete feedback for the teaching team.
+     * Summarizes complete feedback for teachers.
      *
      * Pros and grows are shuffled separately so a comment cannot be matched to its
      * writer's ratings, its partner comment or the order students submitted in.
@@ -142,10 +138,8 @@ public class LessonFeedbackRules {
                 }
             }
         }
-        int count = complete.size();
-        if (count < MIN_RESPONSES_FOR_SUMMARY) {
-            return new Summary(count, false, null, null, null, null, List.of(), List.of());
-        }
+        Map<String, List<Integer>> counts = new LinkedHashMap<>();
+        RATINGS.forEach((name, rating) -> counts.put(name, countsOf(complete, rating)));
         List<String> pros = new ArrayList<>();
         List<String> grows = new ArrayList<>();
         for (Feedback record : complete) {
@@ -154,11 +148,12 @@ public class LessonFeedbackRules {
         }
         Collections.shuffle(pros, random);
         Collections.shuffle(grows, random);
-        return new Summary(count, true,
+        return new Summary(complete.size(),
                 average(complete, Feedback::lesson),
                 average(complete, Feedback::engage),
                 average(complete, Feedback::popcorn),
                 average(complete, Feedback::homework),
+                Collections.unmodifiableMap(counts),
                 List.copyOf(pros), List.copyOf(grows));
     }
 
@@ -209,7 +204,19 @@ public class LessonFeedbackRules {
         return text == null || text.isBlank();
     }
 
+    private static List<Integer> countsOf(List<Feedback> records, Function<Feedback, Integer> rating) {
+        Integer[] counts = new Integer[MAX_RATING - MIN_RATING + 1];
+        Arrays.fill(counts, 0);
+        for (Feedback record : records) {
+            counts[rating.apply(record) - MIN_RATING]++;
+        }
+        return List.of(counts);
+    }
+
     private static Double average(List<Feedback> records, Function<Feedback, Integer> rating) {
+        if (records.isEmpty()) {
+            return null;
+        }
         double total = 0;
         for (Feedback record : records) {
             total += rating.apply(record);

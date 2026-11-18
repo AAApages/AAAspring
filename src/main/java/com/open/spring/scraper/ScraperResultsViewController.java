@@ -23,7 +23,7 @@ public class ScraperResultsViewController {
         String uid = userDetails == null ? null : userDetails.getUsername();
         Person user = uid == null ? null : personRepo.findByUid(uid);
 
-        if (user == null || (!user.hasRoleWithName("ROLE_TEACHER") && !user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (user == null || (!user.hasRole("ROLE_TEACHER") && !user.hasRole("ROLE_ADMIN"))) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN, "You must be a teacher or admin to view the scraper results dashboard"
             );

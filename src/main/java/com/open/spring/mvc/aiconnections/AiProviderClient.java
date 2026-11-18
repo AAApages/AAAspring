@@ -22,19 +22,28 @@ public class AiProviderClient {
     private final String geminiUrl;
     private final String groqModel;
     private final String geminiModelsUrl;
-    private final String groqBaseUrl;
+    private final String groqModelsUrl;
+    private final String groqChatUrl;
 
     @Autowired
     public AiProviderClient(ObjectMapper mapper,
-            @Value("${gemini.api.url:https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent}") String geminiUrl,
-            @Value("${groq.grading-model:${GROQ_GRADING_MODEL:}}") String groqModel) {
+            @Value("${gemini.api.url:https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent}") String geminiUrl,
+            @Value("${groq.grading-model:${GROQ_GRADING_MODEL:llama-3.1-8b-instant}}") String groqModel,
+            @Value("${groq.api.url:${GROQ_SERVER:https://api.groq.com/openai/v1/chat/completions}}") String groqChatUrl) {
         this(mapper, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build(), geminiUrl,
-            groqModel, "https://generativelanguage.googleapis.com/v1beta/models", "https://api.groq.com/openai/v1");
+            groqModel, "https://generativelanguage.googleapis.com/v1beta/models",
+            URI.create(groqChatUrl).resolve("../models").toString(), groqChatUrl);
     }
     AiProviderClient(ObjectMapper mapper, HttpClient http, String geminiUrl, String groqModel,
             String geminiModelsUrl, String groqBaseUrl) {
+        this(mapper, http, geminiUrl, groqModel, geminiModelsUrl,
+            groqBaseUrl + "/models", groqBaseUrl + "/chat/completions");
+    }
+    AiProviderClient(ObjectMapper mapper, HttpClient http, String geminiUrl, String groqModel,
+            String geminiModelsUrl, String groqModelsUrl, String groqChatUrl) {
         this.mapper = mapper; this.http = http; this.geminiUrl = geminiUrl;
-        this.groqModel = groqModel; this.geminiModelsUrl = geminiModelsUrl; this.groqBaseUrl = groqBaseUrl;
+        this.groqModel = groqModel; this.geminiModelsUrl = geminiModelsUrl;
+        this.groqModelsUrl = groqModelsUrl; this.groqChatUrl = groqChatUrl;
     }
     public boolean isConfigured(AiProvider provider) {
         return provider == AiProvider.gemini ? geminiUrl != null && !geminiUrl.isBlank()
@@ -44,7 +53,7 @@ public class AiProviderClient {
         if (!isConfigured(provider)) throw new AiConnectionException(503, "AI_MODEL_UNCONFIGURED",
             "This provider's grading model is not configured. Contact support.");
         try {
-            String url = provider == AiProvider.gemini ? geminiModelsUrl : groqBaseUrl + "/models";
+            String url = provider == AiProvider.gemini ? geminiModelsUrl : groqModelsUrl;
             JsonNode body = send(provider, key, url, null);
             if (!body.path(provider == AiProvider.gemini ? "models" : "data").isArray()) {
                 throw new AiProviderFailure(false, "Provider returned an invalid key-validation response.");
@@ -74,7 +83,7 @@ public class AiProviderClient {
                 "response_format", Map.of("type", "json_object"), "temperature", 0.2,
                 "max_completion_tokens", budget.maxCompletionTokens());
         JsonNode response = send(provider, key,
-            provider == AiProvider.gemini ? geminiUrl : groqBaseUrl + "/chat/completions", body);
+            provider == AiProvider.gemini ? geminiUrl : groqChatUrl, body);
         if (provider == AiProvider.gemini) {
             JsonNode candidate = response.path("candidates").path(0);
             String reason = candidate.path("finishReason").asText();

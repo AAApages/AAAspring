@@ -66,9 +66,8 @@ public class AssignmentSyncAccountProvisioner {
             throw new IllegalStateException("Assignment sync email is already used by another account");
         }
 
-        PersonRole syncRole = roleRepository.findByName(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC);
-        if (syncRole == null) {
-            syncRole = roleRepository.save(new PersonRole(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC));
+        if (roleRepository.findByName(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC) == null) {
+            roleRepository.save(new PersonRole(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC));
         }
 
         Person bot = Person.createPerson(
@@ -80,7 +79,6 @@ public class AssignmentSyncAccountProvisioner {
             "/images/default.png",
             false,
             List.of(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC));
-        bot.setRoles(new ArrayList<>(List.of(syncRole)));
         personDetailsService.save(bot);
         logger.info("Provisioned assignment sync account '{}'", uid);
         return true;
@@ -89,7 +87,7 @@ public class AssignmentSyncAccountProvisioner {
     private void ensureDedicatedSyncAccount(Person person) {
         boolean onlySyncRole = person.getRoles() != null
             && person.getRoles().size() == 1
-            && person.hasRoleWithName(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC);
+            && person.hasRole(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC);
         if (!onlySyncRole) {
             throw new IllegalStateException(
                 "PAGES_BOT_UID already belongs to a non-dedicated account; choose a separate bot UID");

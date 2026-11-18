@@ -34,6 +34,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.open.spring.mvc.lessonfeedback.LessonFeedbackRules;
+import com.open.spring.mvc.lessonfeedback.LessonFeedbackService;
 import com.open.spring.mvc.person.Person;
 import com.open.spring.mvc.person.PersonJpaRepository;
 import com.open.spring.mvc.person.PersonRole;
@@ -50,7 +52,7 @@ import com.open.spring.mvc.synergy.SynergyGradeJpaRepository;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({SubmissionGradingService.class, SubmissionAiGrader.class, AssignmentAuthorizationService.class,
         AssignmentClosureService.class, GradeReviewService.class, FinalGradeTransfer.class,
-        AssignmentSubmissionHistoryService.class,
+        AssignmentSubmissionHistoryService.class, LessonFeedbackService.class, LessonFeedbackRules.class,
         SubmissionGradingPersistenceTest.Json.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SubmissionGradingPersistenceTest {
@@ -137,7 +139,7 @@ class SubmissionGradingPersistenceTest {
         if (personRole == null) {
             personRole = roleRepo.save(new PersonRole(role));
         }
-        return personRepo.save(new Person(uid + "@example.com", uid, "password", "sid-" + uid, name, null, false, personRole));
+        return personRepo.save(new Person(uid + "@example.com", uid, "password", "sid-" + uid, name, null, false, role));
     }
 
     private AssignmentSubmission submit(Person student, String url) {

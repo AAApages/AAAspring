@@ -128,7 +128,7 @@ public class PersonViewController {
         }
         repository.save(person);
 
-        if (!(person.hasRoleWithName("ROLE_ADMIN") || person.hasRoleWithName("ROLE_TEACHER"))) {
+        if (!(person.hasRole("ROLE_ADMIN") || person.hasRole("ROLE_TEACHER"))) {
             repository.addRoleToPerson(person.getUid(), "ROLE_STUDENT");
         }
         
@@ -341,7 +341,7 @@ public class PersonViewController {
         int numAdmins = 0;
         List<Person> personList = repository.listAll();
         for(int i=0; i<personList.size();i++){
-            if(personList.get(i).hasRoleWithName("ROLE_ADMIN")){
+            if(personList.get(i).hasRole("ROLE_ADMIN")){
                 numAdmins++;
             }
         }
@@ -354,7 +354,7 @@ public class PersonViewController {
         UserDetails userDetails = (UserDetails) authentication.getPrincipal();
          //don't delete an admin account when only 1 exists
         Person personToDelete = repository.getByUid(userDetails.getUsername());
-        if(personToDelete.hasRoleWithName("ROLE_ADMIN") && numAdmins()<2){
+        if(personToDelete.hasRole("ROLE_ADMIN") && numAdmins()<2){
             return "redirect:/error/401";
         }
         
@@ -372,7 +372,7 @@ public class PersonViewController {
     public String personDelete(Authentication authentication, @PathVariable("id") long id) { 
         //don't delete an admin account when only 1 exists
         Person personToDelete = repository.get(id);
-         if(personToDelete.hasRoleWithName("ROLE_ADMIN") && numAdmins()<2){
+         if(personToDelete.hasRole("ROLE_ADMIN") && numAdmins()<2){
             return "redirect:/error/401";
         }
 
@@ -412,7 +412,7 @@ public class PersonViewController {
         }
 
         //don't allow people to reset the passwords of admins
-        if (personToReset.getRoles().stream().anyMatch(role -> "ROLE_ADMIN".equals(role.getName()))){
+        if (personToReset.hasRole("ROLE_ADMIN")){
             return new ResponseEntity<Object>(HttpStatus.UNAUTHORIZED);
         }
 
@@ -550,7 +550,7 @@ public class PersonViewController {
         }
 
         //don't allow people to reset the passwords of admins
-        if (personToReset.getRoles().stream().anyMatch(role -> "ROLE_ADMIN".equals(role.getName()))) {
+        if (personToReset.hasRole("ROLE_ADMIN")) {
             logger.warn("AUDIT oauth_reset_denied uid={} reason=admin_account", personToReset.getUid());
             return oauthResetDenied(HttpStatus.FORBIDDEN);
         }

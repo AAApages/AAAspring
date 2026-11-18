@@ -45,6 +45,9 @@ public class JwtApiController {
 	@Autowired
 	private CookieFactory cookieFactory;
 
+	@Autowired
+	private LoginFailureLimiter loginFailureLimiter;
+
 	// Cookie attributes live in CookieFactory.
 
 	@PostMapping("/authenticate")
@@ -53,11 +56,20 @@ public class JwtApiController {
 		if (resolvedUid == null) {
 			return new ResponseEntity<>("Authentication failed: INVALID_CREDENTIALS", HttpStatus.UNAUTHORIZED);
 		}
+		String ip = request.getRemoteAddr();
+		if (loginFailureLimiter.isBlocked(resolvedUid, ip)) {
+			// Refused before the password is checked, so further guesses learn nothing.
+			return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+					.header(HttpHeaders.RETRY_AFTER, String.valueOf(loginFailureLimiter.windowMinutes() * 60))
+					.body("Too many failed logins for this account. Try again later or reset your password.");
+		}
 		try {
 			authenticate(resolvedUid, authenticationRequest.getPassword());
 		} catch (Exception e) {
+			loginFailureLimiter.recordFailure(resolvedUid, ip);
 			return new ResponseEntity<>("Authentication failed: " + e.getMessage(), HttpStatus.UNAUTHORIZED);
 		}
+		loginFailureLimiter.recordSuccess(resolvedUid, ip);
 		
 		final UserDetails userDetails = personDetailsService
 				.loadUserByUsername(resolvedUid);

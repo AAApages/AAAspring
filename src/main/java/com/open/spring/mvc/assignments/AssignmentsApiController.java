@@ -24,6 +24,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -117,6 +118,8 @@ public class AssignmentsApiController {
         public List<String> creatorUids;
         /** Weighted hacks parsed from the page; empty when the assignment is not hack-weighted. */
         public List<AssignmentRubricService.HackWeight> hackWeights;
+        /** A team-taught lesson: students give lesson feedback, and teachers see its Lesson Summary. */
+        public boolean teamTeach;
 
         public AssignmentDto(
                 Assignment assignment,
@@ -144,6 +147,7 @@ public class AssignmentsApiController {
             this.resourceUploadedBy = extractResourceUploader(assignment);
             this.contentUrl = assignment.getContentUrl();
             this.hackWeights = AssignmentRubricService.readHackWeights(assignment.getHackWeights());
+            this.teamTeach = Boolean.TRUE.equals(assignment.getTeamTeach());
         }
 
         private static String extractResourceUploader(Assignment assignment) {
@@ -303,8 +307,8 @@ public class AssignmentsApiController {
      * Any authenticated user (student, person, teacher, admin) can create assignments.
      * If an assignment with the same contentUrl already exists, it returns that instead of creating a duplicate.
      *
-     * Metadata synchronization is separate from creation: creatorUids and courseCodes are only honored for
-     * the trusted Pages bot (ROLE_ASSIGNMENT_SYNC). Browser calls omit the parameter entirely
+     * Metadata synchronization is separate from creation: creatorUids, courseCodes and teamTeach are only
+     * honored for the trusted Pages bot (ROLE_ASSIGNMENT_SYNC). Browser calls omit the parameter entirely
      * and keep their existing behavior.
      *
      * @param name The name of the assignment (required)
@@ -312,6 +316,7 @@ public class AssignmentsApiController {
      * @param description The description of the assignment (optional)
      * @param creatorUids Repeated form fields naming the assignment owners by Person.uid (optional, sync bot only)
      * @param courseCodes Repeated canonical course group names (optional, sync bot only)
+     * @param teamTeach The page's team_teach flag: homework waits for lesson feedback (optional, sync bot only)
      * @param userDetails The authenticated user making the request
      * @return The created or existing assignment with auto-generated ID
      */
@@ -327,6 +332,7 @@ public class AssignmentsApiController {
             @RequestParam(required = false) String pageContent,
             @RequestParam(required = false) List<String> creatorUids,
             @RequestParam(required = false) List<String> courseCodes,
+            @RequestParam(required = false) Boolean teamTeach,
             @AuthenticationPrincipal UserDetails userDetails
     ) {
         // Debug log input
@@ -361,9 +367,10 @@ public class AssignmentsApiController {
         // Absent parameter == legacy behavior, which is what the browser flow relies on.
         boolean synchronizeCreators = creatorUids != null;
         boolean synchronizeCourses = courseCodes != null;
+        boolean synchronizeTeamTeach = teamTeach != null;
         List<Person> resolvedCreators = List.of();
         List<com.open.spring.mvc.groups.Groups> resolvedCourseGroups = List.of();
-        if (synchronizeCreators || synchronizeCourses) {
+        if (synchronizeCreators || synchronizeCourses || synchronizeTeamTeach) {
             Person requester = personRepo.findByUid(userDetails.getUsername());
             if (!assignmentAuthorizationService.canSynchronizeAssignmentMetadata(requester)) {
                 logger.warn("Rejected assignment metadata synchronization from non-sync user '{}' for contentUrl {}",
@@ -443,6 +450,10 @@ public class AssignmentsApiController {
             metadataChanged = (synchronizeCourses
                 && assignmentCourseSyncService.applyCourseGroups(assignment, resolvedCourseGroups))
                 || metadataChanged;
+            if (synchronizeTeamTeach && teamTeach != Boolean.TRUE.equals(assignment.getTeamTeach())) {
+                assignment.setTeamTeach(teamTeach);
+                metadataChanged = true;
+            }
             if (metadataChanged) {
                 assignment = saveAssignmentWithRetry(assignment);
                 assignmentWasResaved = true;
@@ -491,7 +502,10 @@ public class AssignmentsApiController {
             if (synchronizeCourses) {
                 assignmentCourseSyncService.applyCourseGroups(newAssignment, resolvedCourseGroups);
             }
-            
+            if (synchronizeTeamTeach) {
+                newAssignment.setTeamTeach(teamTeach);
+            }
+
             normalizeAssignmentSequenceForSqlite();
             Assignment savedAssignment = saveAssignmentWithRetry(newAssignment);
             aiRegradeService.requestRubric(savedAssignment.getId(), name, description, pageContent);
@@ -528,7 +542,7 @@ public class AssignmentsApiController {
             List<String> creatorUids,
             UserDetails userDetails) {
         return autoCreateAssignment(
-            name, contentUrl, description, points, dueDate, null, null, creatorUids, null, userDetails);
+            name, contentUrl, description, points, dueDate, null, null, creatorUids, null, null, userDetails);
     }
 
     /**
@@ -858,40 +872,34 @@ public class AssignmentsApiController {
     }
 
     /**
-     * A POST endpoint to edit an assignment.
-     * @param name The name of the assignment.
-     * @param body The new information about the assignment.
-     * @return The edited assignment.
-     */
-    @PostMapping("/edit/{name}")
-    public ResponseEntity<?> editAssignment(
-            @PathVariable String name,
-            @RequestBody String body) {
-        Assignment assignment = assignmentRepo.findByName(name);
-        if (assignment != null) {
-            assignment.setName(name);
-            assignmentRepo.save(assignment);
-            return new ResponseEntity<>(assignment, HttpStatus.OK);
-        }
-        Map<String, String> error = new HashMap<>();
-        error.put("error", "Assignment not found: " + name);
-        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
-    }
-
-    /**
      * A GET endpoint to retrieve all submissions for a student.
      * @param studentId The ID of the student.
      * @return A list of all submissions for the student.
      * If the student is not found, returns a 404 error.
      * If the student has no submissions, returns an empty list.
      * If the student has submissions, returns a list of AssignmentSubmissionReturnDto objects.
+     * Access is restricted to the student requesting their own submissions, or a teacher/admin.
      */
     @Transactional
     @GetMapping("/submissions/student/{studentId}")
-    public ResponseEntity<?> getSubmissions(@PathVariable Long studentId) {
-        if (personRepo.findById(studentId).isEmpty()) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Student not found");
-        }
+    public ResponseEntity<?> getStudentSubmissions(@PathVariable Long studentId, @AuthenticationPrincipal UserDetails userDetails) {
+	// check if requested studentId exists
+	Person p = personRepo.findById(studentId)
+		.orElseThrow(() -> new ResponseStatusException(
+			HttpStatus.NOT_FOUND, "Student not found"
+		));
+
+	// fetch credentials of the requester
+	String requesterUid = userDetails.getUsername();
+	Person requester = Optional.ofNullable(personRepo.findByUid(requesterUid))
+		.orElseThrow(() -> new ResponseStatusException(
+			HttpStatus.NOT_FOUND, "User not found with uid: " + requesterUid
+		));
+	// if the uid from the AuthenticationPrincipal does not match the requested studentId,
+	// reject the request; EXCEPTION: admins/teachers are allowed
+	if (!p.getUid().equals(requesterUid) && !(requester.hasRole("ROLE_TEACHER") || requester.hasRole("ROLE_ADMIN"))) {
+		throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User does not have access to this resource");
+	}
 
         List<AssignmentSubmissionReturnDto> dtos = Stream.concat(
             submissionRepo.findBySubmitterId(studentId).stream(),
@@ -1089,7 +1097,7 @@ public class AssignmentsApiController {
 
         Stream<AssignmentSubmission> submissions = submissionRepo.findByAssignmentId(assignmentId).stream();
 
-        if (!(user.hasRoleWithName("ROLE_TEACHER") || user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (!(user.hasRole("ROLE_TEACHER") || user.hasRole("ROLE_ADMIN"))) {
             // if they aren't a teacher or admin, only let them see submissions they are assigned to grade
             submissions = submissions
                 .filter(submission -> submission.getAssignedGraders().contains(user));
@@ -1518,7 +1526,7 @@ public class AssignmentsApiController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Authentication required");
         }
         Person user = personRepo.findByUid(userDetails.getUsername());
-        if (user == null || !(user.hasRoleWithName("ROLE_TEACHER") || user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (user == null || !(user.hasRole("ROLE_TEACHER") || user.hasRole("ROLE_ADMIN"))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Teacher or admin role required");
         }
         return user;

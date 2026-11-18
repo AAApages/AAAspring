@@ -25,7 +25,8 @@ import lombok.RequiredArgsConstructor;
  * The established pattern for schema changes here is hand-written idempotent SQL with
  * swallowed exceptions (see ModelInit.run() and
  * AssignmentsApiController.normalizeAssignmentSequenceForSqlite()), which is what this does.
- * Identifiers are quoted to match hibernate.globally_quoted_identifiers=true.
+ * The statements are unquoted so they run on SQLite and on MySQL alike (as in TableSchema): MySQL reads a
+ * double-quoted name as a string unless ANSI_QUOTES is on, and every failure here is swallowed.
  *
  * Every step is safe to repeat: it runs on each boot and is a no-op once applied.
  */
@@ -51,7 +52,7 @@ public class AssignmentContentUrlMigration {
 
     private void addContentUrlColumn() {
         try {
-            jdbcTemplate.execute("ALTER TABLE \"assignment\" ADD COLUMN \"content_url\" varchar(255)");
+            jdbcTemplate.execute("ALTER TABLE assignment ADD COLUMN content_url varchar(255)");
             logger.info("Added 'content_url' column to 'assignment' table");
         } catch (DataAccessException ignored) {
             // Column already exists on every boot after the first.
@@ -93,12 +94,12 @@ public class AssignmentContentUrlMigration {
         // forms because SQLite and MySQL spell "drop index" differently; each is tried
         // independently so one dialect rejecting its form doesn't block the other's.
         try {
-            jdbcTemplate.execute("DROP INDEX IF EXISTS \"idx_assignment_content_url\"");
+            jdbcTemplate.execute("DROP INDEX IF EXISTS idx_assignment_content_url");
         } catch (DataAccessException ignored) {
             // Not SQLite, or the index never existed under this form.
         }
         try {
-            jdbcTemplate.execute("DROP INDEX \"idx_assignment_content_url\" ON \"assignment\"");
+            jdbcTemplate.execute("DROP INDEX idx_assignment_content_url ON assignment");
         } catch (DataAccessException ignored) {
             // Not MySQL, or the index never existed under this form.
         }
@@ -109,8 +110,8 @@ public class AssignmentContentUrlMigration {
         // rather than a startup failure.
         try {
             jdbcTemplate.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS \"idx_assignment_content_url\" "
-                    + "ON \"assignment\" (\"content_url\")");
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_assignment_content_url "
+                    + "ON assignment (content_url)");
         } catch (DataAccessException ignored) {
             // Index already exists, or the dialect refuses IF NOT EXISTS.
         }
@@ -119,9 +120,9 @@ public class AssignmentContentUrlMigration {
     private boolean duplicateContentUrlsExist() {
         try {
             Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM (SELECT \"content_url\" FROM \"assignment\" "
-                    + "WHERE \"content_url\" IS NOT NULL GROUP BY \"content_url\" "
-                    + "HAVING COUNT(*) > 1) \"dup\"",
+                "SELECT COUNT(*) FROM (SELECT content_url FROM assignment "
+                    + "WHERE content_url IS NOT NULL GROUP BY content_url "
+                    + "HAVING COUNT(*) > 1) dup",
                 Integer.class);
             return count != null && count > 0;
         } catch (DataAccessException e) {
@@ -141,8 +142,8 @@ public class AssignmentContentUrlMigration {
         List<Map<String, Object>> rows;
         try {
             rows = jdbcTemplate.queryForList(
-                "SELECT \"id\", \"description\" FROM \"assignment\" "
-                    + "WHERE \"content_url\" IS NULL AND \"description\" LIKE '[CONTENT_URL: %'");
+                "SELECT id, description FROM assignment "
+                    + "WHERE content_url IS NULL AND description LIKE '[CONTENT_URL: %'");
         } catch (DataAccessException e) {
             logger.warn("Skipped assignment content_url backfill: {}", e.getMessage());
             return;
@@ -164,7 +165,7 @@ public class AssignmentContentUrlMigration {
 
             try {
                 updated += jdbcTemplate.update(
-                    "UPDATE \"assignment\" SET \"content_url\" = ? WHERE \"id\" = ?",
+                    "UPDATE assignment SET content_url = ? WHERE id = ?",
                     contentUrl, id);
             } catch (DataAccessException e) {
                 logger.warn("Could not backfill content_url for assignment {}: {}", id, e.getMessage());

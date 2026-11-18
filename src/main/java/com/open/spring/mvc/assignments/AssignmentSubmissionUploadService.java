@@ -79,6 +79,9 @@ public class AssignmentSubmissionUploadService {
         if (assignment.isClosed()) {
             throw new UploadException(GradingOutcome.ASSIGNMENT_CLOSED);
         }
+        if (historyService.isLessonFeedbackMissing(authenticatedUser, assignment)) {
+            throw new UploadException(GradingOutcome.LESSON_FEEDBACK_REQUIRED);
+        }
 
         String originalFilename = sanitizeFilename(file);
         String s3Filename = buildS3Filename(assignment.getName(), originalFilename);
@@ -176,8 +179,8 @@ public class AssignmentSubmissionUploadService {
     }
 
     private void validateSubmitPermission(Person authenticatedUser, Long userId) {
-        boolean privileged = authenticatedUser.hasRoleWithName("ROLE_TEACHER")
-                || authenticatedUser.hasRoleWithName("ROLE_ADMIN");
+        boolean privileged = authenticatedUser.hasRole("ROLE_TEACHER")
+                || authenticatedUser.hasRole("ROLE_ADMIN");
         if (!privileged && !Objects.equals(authenticatedUser.getId(), userId)) {
             throw new UploadException(HttpStatus.FORBIDDEN, "You can only submit assignments for your own account");
         }

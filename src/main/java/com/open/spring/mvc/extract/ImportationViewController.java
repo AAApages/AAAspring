@@ -76,7 +76,8 @@ public class ImportationViewController {
        
         boolean samePassword = true;
 
-        if (person.getPassword() != null && !person.getPassword().isBlank()) {
+        // Extract sends the stored hash, so the same value coming back is not a new password
+        if (person.getPassword() != null && !person.getPassword().isBlank() && !person.getPassword().equals(personToUpdate.getPassword())) {
             personToUpdate.setPassword(person.getPassword());
             samePassword = false;
         }

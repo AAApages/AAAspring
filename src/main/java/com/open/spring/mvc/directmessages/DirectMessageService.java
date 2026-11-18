@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 
+import org.springframework.data.domain.PageRequest;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +29,11 @@ public class DirectMessageService {
 
     public static final String DM_TOPIC_PREFIX = "/topic/dm/";
     public static final int MAX_BODY_LENGTH = 2000; // matches @Column(length = 2000) on DirectMessage.body
+    public static final int MIN_SEARCH_LENGTH = 2;
+    public static final int MAX_SEARCH_LENGTH = 100;
+    public static final int MAX_SEARCH_RESULTS = 50;
+    /** How many database matches one search reads before checking their plain text. */
+    private static final int SEARCH_CANDIDATE_LIMIT = 200;
 
     private final DirectMessageConversationJpaRepository conversationRepository;
     private final DirectMessageJpaRepository messageRepository;
@@ -43,6 +49,14 @@ public class DirectMessageService {
      * first; {@code unreadByConversation} is the unread message count per conversation.
      */
     public record UnreadSummary(List<UnreadSender> people, Map<Long, Long> unreadByConversation) {
+    }
+
+    /**
+     * One message a search found. {@code excerpt} is plain text around the match, never
+     * HTML, so the page can show it without sanitising it.
+     */
+    public record SearchHit(Long id, Long conversationId, String senderUid, String senderName,
+            String sentAt, String excerpt) {
     }
 
     /**
@@ -216,6 +230,62 @@ public class DirectMessageService {
             unreadByConversation.merge(row.conversationId(), row.unreadCount(), Long::sum);
         }
         return new UnreadSummary(List.copyOf(people.values()), unreadByConversation);
+    }
+
+    /**
+     * Messages in {@code person}'s own conversations whose text contains {@code query},
+     * newest first, at most {@link #MAX_SEARCH_RESULTS}. Case is ignored.
+     *
+     * The database filters on the stored HTML, which also matches tag and class names
+     * (a search for "strong" finds every bold message), so each candidate's plain text
+     * is checked again here. Throws {@link IllegalArgumentException} for a query that is
+     * too short or too long; {@code noRollbackFor} for the reason given on
+     * {@link #editMessage}.
+     */
+    @Transactional(readOnly = true, noRollbackFor = IllegalArgumentException.class)
+    public List<SearchHit> searchMessages(Person person, String query) {
+        return searchMessages(person, query, null);
+    }
+
+    /**
+     * Same as {@link #searchMessages(Person, String)}, limited to one conversation when
+     * {@code conversationId} is given. A conversation the person isn't in finds nothing.
+     */
+    @Transactional(readOnly = true, noRollbackFor = IllegalArgumentException.class)
+    public List<SearchHit> searchMessages(Person person, String query, Long conversationId) {
+        String term = query == null ? "" : query.trim();
+        if (term.length() < MIN_SEARCH_LENGTH) {
+            throw new IllegalArgumentException("query needs at least " + MIN_SEARCH_LENGTH + " characters");
+        }
+        if (term.length() > MAX_SEARCH_LENGTH) {
+            throw new IllegalArgumentException("query is too long");
+        }
+
+        String pattern = DirectMessageSearchText.likePattern(term);
+        PageRequest page = PageRequest.of(0, SEARCH_CANDIDATE_LIMIT);
+        List<DirectMessage> candidates = conversationId == null
+                ? messageRepository.findSearchCandidates(person, pattern, page)
+                : messageRepository.findSearchCandidatesInConversation(person, conversationId, pattern, page);
+
+        List<SearchHit> hits = new ArrayList<>();
+        for (DirectMessage message : candidates) {
+            String excerpt = DirectMessageSearchText.excerpt(
+                    DirectMessageSearchText.plainText(message.getBody()), term);
+            if (excerpt.isEmpty()) {
+                continue; // matched only inside the HTML markup
+            }
+            hits.add(new SearchHit(
+                    message.getId(),
+                    message.getConversation().getId(),
+                    message.getSender().getUid(),
+                    message.getSender().getName(),
+                    message.getSentAt().toString(),
+                    excerpt));
+            if (hits.size() == MAX_SEARCH_RESULTS) {
+                break;
+            }
+        }
+        return hits;
     }
 
     /** Marks everything currently in the conversation as read for {@code person}. */

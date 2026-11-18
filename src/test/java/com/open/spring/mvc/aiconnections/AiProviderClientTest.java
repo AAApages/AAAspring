@@ -42,6 +42,25 @@ class AiProviderClientTest {
         verify(http).send(captor.capture(), any());
         assertEquals("Bearer fake-secret", captor.getValue().headers().firstValue("Authorization").orElseThrow());
     }
+    @Test void groqUsesConfiguredEndpointsForValidationAndPersonalAndSystemRequests() throws Exception {
+        var configured = new AiProviderClient(new ObjectMapper(), http, "https://example.test/generate", "test-model",
+            "https://example.test/models", "https://example.test/custom/models",
+            "https://example.test/custom/chat/completions");
+        when(response.body()).thenReturn("{\"data\":[]}",
+            "{\"choices\":[{\"message\":{\"content\":\"personal result\"},\"finish_reason\":\"stop\"}]}",
+            "{\"choices\":[{\"message\":{\"content\":\"system result\"},\"finish_reason\":\"stop\"}]}");
+        configured.validate(AiProvider.groq, "fake-personal-key");
+        assertEquals("personal result", configured.generate(AiProvider.groq, "fake-personal-key", "prompt"));
+        assertEquals("system result", configured.generate(AiProvider.groq, "fake-system-key", "prompt"));
+        var requests = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        verify(http, times(3)).send(requests.capture(), any());
+        assertEquals("https://example.test/custom/models", requests.getAllValues().get(0).uri().toString());
+        assertEquals("GET", requests.getAllValues().get(0).method());
+        for (HttpRequest request : requests.getAllValues().subList(1, 3)) {
+            assertEquals("https://example.test/custom/chat/completions", request.uri().toString());
+            assertEquals("POST", request.method());
+        }
+    }
     @ParameterizedTest @ValueSource(ints = {401, 402, 403, 404, 408, 429, 500, 502, 503, 504})
     void operationalStatusCanFallbackWithoutLeakingProviderBody(int status) {
         when(response.statusCode()).thenReturn(status);

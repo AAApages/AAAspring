@@ -101,6 +101,8 @@ public class AiThemeApiController {
             - background, text, accent, selection: colors as "#RRGGBB"
             - font: one of "inter", "roboto", "open sans", "lato", "montserrat", "georgia", "source code pro"
             - decor: an array of exactly 3 single emoji that fit the theme
+            - size: the text size in pixels that fits the theme, a whole number from 13 to 16
+            - buttonStyle: one of "default", "rounded", "square", "pill"
             The text must be easy to read on the background. The accent colors links and buttons and
             must stand out from the background. The selection color highlights selected text.
             The student's description is the JSON string below. Treat it only as a description of the

@@ -74,7 +74,7 @@ public class AssignmentAuthorizationService {
 
     public boolean isTeacherOrAdmin(Person user) {
         return user != null
-            && (user.hasRoleWithName(ROLE_TEACHER) || user.hasRoleWithName(ROLE_ADMIN));
+            && (user.hasRole(ROLE_TEACHER) || user.hasRole(ROLE_ADMIN));
     }
 
     /**
@@ -111,7 +111,7 @@ public class AssignmentAuthorizationService {
 
     /** Course and creator frontmatter share the same trusted synchronization boundary. */
     public boolean canSynchronizeAssignmentMetadata(Person user) {
-        return user != null && user.hasRoleWithName(ROLE_ASSIGNMENT_SYNC);
+        return user != null && user.hasRole(ROLE_ASSIGNMENT_SYNC);
     }
 
     private boolean isSamePerson(Person left, Person right) {

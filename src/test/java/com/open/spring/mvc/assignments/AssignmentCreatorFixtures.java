@@ -32,11 +32,7 @@ final class AssignmentCreatorFixtures {
         ReflectionTestUtils.setField(person, "id", id);
         person.setUid(uid);
         person.setName(uid);
-        List<PersonRole> roles = new ArrayList<>();
-        for (String roleName : roleNames) {
-            roles.add(new PersonRole(roleName));
-        }
-        person.setRoles(roles);
+        person.setRoles(new ArrayList<>(java.util.List.of(roleNames)));
         return person;
     }
 

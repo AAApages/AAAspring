@@ -177,7 +177,7 @@ public class GradeForecastApiRestController {
 
     private Person studentForTeacher(UserDetails user, Long personId) {
         Person teacher = caller(user);
-        if (!teacher.hasRoleWithName("ROLE_TEACHER") && !teacher.hasRoleWithName("ROLE_ADMIN")) {
+        if (!teacher.hasRole("ROLE_TEACHER") && !teacher.hasRole("ROLE_ADMIN")) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only teachers can view another student's forecasts");
         }
         return personRepository.findById(personId)

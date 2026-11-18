@@ -24,12 +24,12 @@ public class AssignmentCourseGroupsMigration {
         return args -> {
             try {
                 jdbcTemplate.execute(
-                    "CREATE TABLE IF NOT EXISTS \"assignment_course_groups\" ("
-                        + "\"assignment_id\" bigint NOT NULL, "
-                        + "\"group_id\" bigint NOT NULL, "
-                        + "PRIMARY KEY (\"assignment_id\", \"group_id\"), "
-                        + "FOREIGN KEY (\"assignment_id\") REFERENCES \"assignment\" (\"id\"), "
-                        + "FOREIGN KEY (\"group_id\") REFERENCES \"groups\" (\"id\"))");
+                    "CREATE TABLE IF NOT EXISTS assignment_course_groups ("
+                        + "assignment_id bigint NOT NULL, "
+                        + "group_id bigint NOT NULL, "
+                        + "PRIMARY KEY (assignment_id, group_id), "
+                        + "FOREIGN KEY (assignment_id) REFERENCES assignment (id), "
+                        + "FOREIGN KEY (group_id) REFERENCES groups (id))");
             } catch (DataAccessException e) {
                 logger.warn("Could not create assignment course-group table: {}", e.getMessage());
             }

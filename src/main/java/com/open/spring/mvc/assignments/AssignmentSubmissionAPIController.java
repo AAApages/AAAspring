@@ -711,7 +711,7 @@ public class AssignmentSubmissionAPIController {
         List<AssignmentSubmission> submissions = submissionRepo.findByAssignmentId(assignmentId);
         List<AssignmentSubmissionReturnDto> submissionsReturn;
 
-        if (!(user.hasRoleWithName("ROLE_TEACHER") || user.hasRoleWithName("ROLE_ADMIN"))) {
+        if (!(user.hasRole("ROLE_TEACHER") || user.hasRole("ROLE_ADMIN"))) {
             // if they aren't a teacher or admin, only let them see submissions they are assigned to grade
             submissionsReturn = submissions.stream()
                 .filter(submission -> submission.getAssignedGraders().contains(user))
@@ -799,7 +799,7 @@ public class AssignmentSubmissionAPIController {
     }
 
     private boolean canEditSubmission(Person currentUser, AssignmentSubmission submission) {
-        if (currentUser.hasRoleWithName("ROLE_ADMIN") || currentUser.hasRoleWithName("ROLE_TEACHER")) {
+        if (currentUser.hasRole("ROLE_ADMIN") || currentUser.hasRole("ROLE_TEACHER")) {
             return true;
         }
 

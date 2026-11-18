@@ -52,6 +52,7 @@ The site is build on Springboot.  The project is primarly used to store and retr
 - [Announcement architecture guide](docs/announcement-architecture.md) — a small example of the five standard parts (REST controller, entity, JPA repository, service, table initializer), with its routes, a diagram, and `api/announcement.http`.
 - [Grading architecture guide](docs/grading-architecture.md) — AI and manual grades, revisions, student petitions, closing an assignment, and teacher reviews. Try the routes with [api/grading.http](api/grading.http).
 - [UI Builder architecture guide](docs/ui-builder-architecture.md) — how Spring stores, checks, publishes and shares the Pages UI Builder's page documents: who may edit and see a page, the row lock and versions, the routes, the tables, known issues, and `api/ui-builder.http`.
+- [Lesson feedback architecture guide](docs/lesson-feedback-architecture.md) — students' two-step ratings of a team-taught lesson, locked ratings, homework that waits for feedback, and the teachers' live Lesson Summary. Try the routes with [api/lessonfeedback.http](api/lessonfeedback.http).
 
 The Java implementation for CS Pathway is now together in `src/main/java/com/open/spring/mvc/toolchain/`. The interactive Toolchain Trail agent/session flow is the current integrated station-check implementation. A separate text-report upload and AI-review flow is still present in the code; confirm whether students still use it before removing it. Existing `/api/cs-pathway` and `/api/toolchain` routes are preserved even though the Java package and class names are now unified.
 
@@ -132,7 +133,10 @@ The `.env` file provides local environment-specific configuration that overrides
 - Then imports `.env` which overrides those values
 - Properties in `.env` take precedence over `application.properties`
 
-**Required .env setup for local development:**
+**Example .env setup for local development:**
+
+Supply credentials for the features you use; they are not all required to start Spring.
+The same AI settings apply in production, using either `.env` or runtime environment variables.
 
 ```bash
 # Default password for seed users and resets (overrides person.default-password)
@@ -162,11 +166,6 @@ USER_SID=0000003
 USER_PASSWORD=123Grace!
 USER_PFP=/images/hop.png
 
-# Trusted Pages assignment synchronization bot (use a unique local password)
-PAGES_BOT_UID=pages-bot
-PAGES_BOT_PASSWORD=replace-with-a-strong-local-password
-PAGES_BOT_EMAIL=pages-bot@example.com
-
 # Convience user defaults
 MY_NAME=John Mortensen
 MY_UID=jm1021
@@ -178,13 +177,30 @@ MY_EMAIL=jmort1021@gmail.com
 jwt.cookie.secure=false
 jwt.cookie.same-site=Lax
 
-# API Keys (optional - defaults exist in application.properties)
-GAMIFY_API_URL=https://api.openai.com/v1/chat/completions
-GAMIFY_API_KEY=your-openai-api-key-here
-GEMINI_API_KEY=your-gemini-api-key-here
-GITHUB_API_TOKEN=your-github-token-here
+# Reference Points (optional - defaults exist in application.properties)
+GEMINI_API_URL=https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
+GROQ_SERVER=https://api.groq.com/openai/v1/chat/completions
+PAGES_BOT_UID=pages-bot
+PAGES_BOT_EMAIL=pages-bot@example.com
 
+# Shared AI API keys (required only for the corresponding system AI features)
+GEMINI_API_KEY=your-gemini-api-key-here
+# Final system grading fallback; personal Groq keys do not require this key
+GROQ_API_KEY=your-groq-key-here
+# Model ID available to your Groq accounts, used by personal and system requests
+# Optional override; this is also the application.properties default
+GROQ_GRADING_MODEL=llama-3.1-8b-instant
+
+# Keys/Tokens (required only for the corresponding features)
+# GitHub Reference Points
+GITHUB_API_TOKEN=your-github-token-here
 GIST_TOKEN=your-github-gist-token-here
+GIST_TOKEN_ENCRYPTION_KEY=your-encryption-token
+# Personal AI key storage: permanent Base64-encoded 32-byte key
+# Generate once with openssl rand -base64 32; preserve it across deployments
+AI_KEY_ENCRYPTION_KEY=replace-with-your-permanent-base64-encoded-32-byte-key
+# Bot Password
+PAGES_BOT_PASSWORD=replace-with-a-strong-local-password
 
 # Email Configuration (optional - overrides application.properties)
 # spring.mail.username=your-email@gmail.com
@@ -199,12 +215,44 @@ AWS_REGION=us-east-2
 # AWS_S3_ENDPOINT=http://localhost:9000
 ```
 
+### Personal AI keys and grading
 
+- `GROQ_API_KEY` is the final shared/system grading fallback, not a student's personal key.
+  Students save their own keys through Profile; no manual `.env` entry or database insert
+  is needed for each student.
+- `AI_KEY_ENCRYPTION_KEY` encrypts stored personal Gemini and Groq keys. Generate it once
+  with `openssl rand -base64 32`, store it securely, and use the same value on every Spring
+  instance. Back it up separately from the database. Replacing or losing it makes existing
+  encrypted keys unreadable and requires users to reconnect.
+- Spring creates `ai_connections` at startup independently of Hibernate's `ddl-auto=none`.
+  The database account needs permission to create the table and select, insert, update,
+  and delete its rows. No database reset is needed to enable personal keys.
+- Saving personal keys requires a valid encryption key, accessible storage, a configured
+  provider model, and successful provider key validation. A missing/invalid encryption key
+  or unavailable storage disables personal-key access; it does **not** prevent submission
+  uploads or grading with configured system keys. If grading fails, the submission stays
+  saved for manual review.
+- `GROQ_GRADING_MODEL` selects the model for both personal and shared Groq requests.
+  It defaults to `llama-3.1-8b-instant` when omitted. Use a supported model ID with access
+  and quota for the intended accounts. Setting it explicitly blank disables Groq grading
+  and personal Groq connections.
+- `GROQ_SERVER` configures the Groq chat-completions URL; key validation uses the `/models`
+  endpoint under the same API base. `GEMINI_API_URL` likewise applies to personal and
+  system Gemini grading.
+- After deployment/restart, an authenticated `GET /api/ai-connections` should report
+  `available: true` and `modelConfigured: true` for the intended providers. This confirms
+  local configuration/storage readiness, not live model access or quota.
+
+See [Personal AI grading keys](docs/personal-ai-keys.md) for routing, deployment, and testing.
+The legacy `GAMIFY_API_URL` and `GAMIFY_API_KEY` names are not consumed by the current
+Spring implementation and are not required.
 
 **Production Configuration:**
 - Production uses the secure defaults from `application.properties` (HTTPS settings)
-- No `.env` file needed on production unless overriding specific values
-- Use environment variables on production servers if preferred (e.g., `JWT_COOKIE_SECURE=true`)
+- Supply production credentials through `.env` or the Spring runtime's environment;
+  application defaults do not provide AI API keys or personal-key encryption keys.
+- Use environment variables on production servers if preferred (e.g., `JWT_COOKIE_SECURE=true`).
+  Restart/redeploy Spring after changing configuration; keep the permanent encryption key unchanged.
 
 **Important:** Never commit the `.env` file to git. It contains sensitive credentials and local-only settings.
 

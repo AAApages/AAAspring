@@ -54,7 +54,7 @@ class AssignmentSyncAccountProvisionerTest {
         assertEquals("pages-bot", bot.getUid());
         assertEquals("pages-bot@example.com", bot.getEmail());
         assertEquals(1, bot.getRoles().size());
-        assertTrue(bot.hasRoleWithName(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC));
+        assertTrue(bot.hasRole(AssignmentAuthorizationService.ROLE_ASSIGNMENT_SYNC));
     }
 
     @Test
@@ -93,7 +93,7 @@ class AssignmentSyncAccountProvisionerTest {
     private Person personWithRoles(String... roleNames) {
         Person person = new Person();
         person.setUid("pages-bot");
-        person.setRoles(List.of(roleNames).stream().map(PersonRole::new).toList());
+        person.setRoles(new java.util.ArrayList<>(List.of(roleNames)));
         return person;
     }
 }

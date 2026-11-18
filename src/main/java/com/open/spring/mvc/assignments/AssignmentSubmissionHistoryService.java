@@ -12,6 +12,7 @@ import java.util.Objects;
 
 import org.springframework.stereotype.Service;
 
+import com.open.spring.mvc.lessonfeedback.LessonFeedbackService;
 import com.open.spring.mvc.person.Person;
 
 /**
@@ -28,14 +29,16 @@ public class AssignmentSubmissionHistoryService {
 
     private final AssignmentSubmissionJPA submissionRepo;
     private final SubmissionGradingService gradingService;
+    private final LessonFeedbackService lessonFeedback;
     // Two submits for the same assignment at once (a double click, or a multi-file upload) must not
     // both see "no submission yet" and insert two rows, so the find-then-save step runs one at a time.
     private final Object submitLock = new Object();
 
     public AssignmentSubmissionHistoryService(AssignmentSubmissionJPA submissionRepo,
-            SubmissionGradingService gradingService) {
+            SubmissionGradingService gradingService, LessonFeedbackService lessonFeedback) {
         this.submissionRepo = submissionRepo;
         this.gradingService = gradingService;
+        this.lessonFeedback = lessonFeedback;
     }
 
     /**
@@ -55,11 +58,21 @@ public class AssignmentSubmissionHistoryService {
     public record SubmitResult(GradingResult result, AssignmentSubmission submission, boolean replaced) {
     }
 
+    /** Whether {@link #submit} would refuse this person's homework for missing lesson feedback. */
+    public boolean isLessonFeedbackMissing(Person submittedBy, Assignment assignment) {
+        return lessonFeedback.isFeedbackMissing(submittedBy, assignment);
+    }
+
     /**
      * Saves {@code draft} as the submitter's submission for its assignment: a new submission if
      * there is none yet, otherwise the draft's work becomes the next revision of the existing one.
+     * A team-taught lesson's homework is refused until the person submitting finishes their
+     * lesson feedback, the same rule the Pages submit buttons apply.
      */
     public SubmitResult submit(AssignmentSubmission draft, Person submittedBy) {
+        if (isLessonFeedbackMissing(submittedBy, draft.getAssignment())) {
+            return new SubmitResult(GradingResult.of(GradingOutcome.LESSON_FEEDBACK_REQUIRED, null), draft, false);
+        }
         synchronized (submitLock) {
             List<AssignmentSubmission> existing = rowsNewestFirst(key(draft));
             if (existing.isEmpty()) {

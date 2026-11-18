@@ -29,6 +29,8 @@ import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.open.spring.mvc.assignments.AssignmentSubmission;
 import com.open.spring.mvc.bank.Bank;
 import com.open.spring.mvc.bathroom.Tinkle;
@@ -206,19 +208,17 @@ public class Person extends Submitter implements Comparable<Person> {
     private List<SynergyGrade> grades;
 
     /**
-     * Many to Many relationship with PersonRole
-     * --- @ManyToMany annotation is used to specify a many-to-many relationship
-     * between the entities.
-     * --- FetchType.EAGER is used to specify that data must be eagerly fetched,
-     * meaning that it must be loaded immediately.
-     * --- Collection is a root interface in the Java Collection Framework, in this
-     * case it is used to store PersonRole objects.
-     * --- ArrayList is a resizable array implementation of the List interface,
-     * allowing all elements to be accessed using an integer index.
-     * --- PersonRole is a POJO, Plain Old Java Object.
+     * The person's roles, stored as one JSON array of role names, for example ["ROLE_USER","ROLE_STUDENT"], in the
+     * roles_json column. Persisted as TEXT to support SQLite; conversion handled by RolesJsonConverter.
+     * hasRole(name) is the only question the model answers about them. What a role may do is decided by the API
+     * and the security rules, so the table is not tied to any particular role.
+     * The JSON a person is sent as is unchanged: each role is {"name": ...}, see RoleNameJson.
      */
-    @ManyToMany(fetch = FetchType.EAGER)
-    private Collection<PersonRole> roles = new ArrayList<>();
+    @Convert(converter = RolesJsonConverter.class)
+    @Column(name = "roles_json", columnDefinition = "text")
+    @JsonSerialize(contentUsing = RoleNameJson.Writer.class)
+    @JsonDeserialize(contentUsing = RoleNameJson.Reader.class)
+    private List<String> roles = new ArrayList<>();
 
     @OneToOne(mappedBy = "person", cascade = CascadeType.ALL)
     @JsonIgnore
@@ -264,7 +264,7 @@ public class Person extends Submitter implements Comparable<Person> {
      * @param dob,      a Date
      */
     public Person(String email, String uid, String password, String sid, String name, String pfp,
-            Boolean kasmServerNeeded, PersonRole role) {
+            Boolean kasmServerNeeded, String roleName) {
         this.email = email;
         this.uid = uid;
         this.password = password;
@@ -272,7 +272,7 @@ public class Person extends Submitter implements Comparable<Person> {
         this.name = name;
         this.kasmServerNeeded = kasmServerNeeded;
         this.pfp = pfp;
-        this.roles.add(role);
+        this.roles.add(roleName);
 
         this.timeEntries = new Tinkle(this, "");
         // Create a Bank for this person
@@ -310,12 +310,7 @@ public class Person extends Submitter implements Comparable<Person> {
         person.setSid(sid);
         person.setKasmServerNeeded(kasmServerNeeded);
         person.setPfp(pfp);
-        List<PersonRole> roles = new ArrayList<>();
-        for (String roleName : roleNames) {
-            PersonRole role = new PersonRole(roleName);
-            roles.add(role);
-        }
-        person.setRoles(roles);
+        person.setRoles(new ArrayList<>(roleNames));
         person.setBanks(new Bank(person));
 
         return person;
@@ -334,18 +329,13 @@ public class Person extends Submitter implements Comparable<Person> {
     // other methods
 
     /**
-     * Custom hasRoleWithName method to find if a role exists on user
+     * Whether the person has the role with this name
      * 
      * @param roleName, a String with the name of the role
-     * @return boolean, the result of the search
+     * @return boolean, whether it is in the person's roles
      */
-    public boolean hasRoleWithName(String roleName) {
-        for (PersonRole role : roles) {
-            if (role.getName().equals(roleName)) {
-                return true;
-            }
-        }
-        return false;
+    public boolean hasRole(String roleName) {
+        return roles != null && roles.contains(roleName);
     }
 
     /**

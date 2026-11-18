@@ -1,0 +1,115 @@
+### Lesson Feedback API Tests
+
+Exercises both feedback steps, the locked ratings and the summary with the
+VS Code REST Client. See docs/lesson-feedback-architecture.md.
+
+Select the `local` or `deployed` environment. `baseUrl`, `adminUid`,
+`adminPassword`, `studentUid` and `studentPassword` are the variables
+`grading.http` uses. Set them in the Git-ignored `.vscode/settings.json`.
+
+Run the requests in order. They work on a throwaway "[TEST]" assignment made
+in step 2. It is not team-taught (only the Pages sync bot sets teamTeach), so
+its homework doesn't wait for this feedback. Logging in again replaces the JWT
+cookie, so each "Sign in" switches who the requests run as.
+
+### 1. Sign in as the teacher
+
+POST {{baseUrl}}/authenticate
+Content-Type: application/json
+
+{
+  "uid": "{{adminUid}}",
+  "password": "{{adminPassword}}"
+}
+
+### 2. Make a throwaway test assignment
+
+# @name testAssignment
+POST {{baseUrl}}/api/assignments/test
+
+### 3. Sign in as the student
+
+POST {{baseUrl}}/authenticate
+Content-Type: application/json
+
+{
+  "uid": "{{studentUid}}",
+  "password": "{{studentPassword}}"
+}
+
+### 4. Read your feedback before saving -> 200, every field null
+
+GET {{baseUrl}}/api/lesson-feedback/{{testAssignment.response.body.$.id}}/mine
+
+### 5. Save the lesson step with two ratings -> 200, lesson and popcorn locked
+
+PUT {{baseUrl}}/api/lesson-feedback/{{testAssignment.response.body.$.id}}/lesson
+Content-Type: application/json
+
+{
+  "lesson": 4,
+  "popcorn": 3,
+  "pros": "Clear examples"
+}
+
+### 6. Try to change a saved rating -> 409
+
+PUT {{baseUrl}}/api/lesson-feedback/{{testAssignment.response.body.$.id}}/lesson
+Content-Type: application/json
+
+{
+  "lesson": 5
+}
+
+### 7. Submission step without Grows -> 400 naming engage, homework and grows
+
+PUT {{baseUrl}}/api/lesson-feedback/{{testAssignment.response.body.$.id}}/submission
+Content-Type: application/json
+
+{
+  "homework": 2
+}
+
+### 8. Complete the submission step -> 200, complete is true
+
+PUT {{baseUrl}}/api/lesson-feedback/{{testAssignment.response.body.$.id}}/submission
+Content-Type: application/json
+
+{
+  "lesson": 4,
+  "engage": 5,
+  "popcorn": 3,
+  "homework": 2,
+  "grows": "Slow down on the hacks"
+}
+
+### 9. A student can't read the summary -> 403
+
+GET {{baseUrl}}/api/lesson-feedback/{{testAssignment.response.body.$.id}}/summary
+
+### 10. Sign in as the teacher again
+
+POST {{baseUrl}}/authenticate
+Content-Type: application/json
+
+{
+  "uid": "{{adminUid}}",
+  "password": "{{adminPassword}}"
+}
+
+### 11. Live summary -> 200, responseCount 1, averages, counts and the comments
+
+GET {{baseUrl}}/api/lesson-feedback/{{testAssignment.response.body.$.id}}/summary
+
+### 12. Close the test assignment
+
+POST {{baseUrl}}/api/assignments/{{testAssignment.response.body.$.id}}/close
+
+### 13. Feedback is final after close -> 409
+
+PUT {{baseUrl}}/api/lesson-feedback/{{testAssignment.response.body.$.id}}/lesson
+Content-Type: application/json
+
+{
+  "pros": "Too late"
+}

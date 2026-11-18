@@ -379,7 +379,7 @@ public class OCSAnalyticsController {
         try {
             // Verify user is admin
             Person admin = personRepository.findByUid(userDetails.getUsername());
-            if (admin == null || !admin.hasRoleWithName("ROLE_ADMIN")) {
+            if (admin == null || !admin.hasRole("ROLE_ADMIN")) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Only admins can access this endpoint");
             }
@@ -483,7 +483,7 @@ public class OCSAnalyticsController {
         try {
             // Verify user is admin
             Person admin = personRepository.findByUid(userDetails.getUsername());
-            if (admin == null || !admin.hasRoleWithName("ROLE_ADMIN")) {
+            if (admin == null || !admin.hasRole("ROLE_ADMIN")) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Only admins can access this endpoint");
             }
@@ -551,7 +551,7 @@ public class OCSAnalyticsController {
         try {
             // Verify user is admin
             Person admin = personRepository.findByUid(userDetails.getUsername());
-            if (admin == null || !admin.hasRoleWithName("ROLE_ADMIN")) {
+            if (admin == null || !admin.hasRole("ROLE_ADMIN")) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Only admins can access this endpoint");
             }
@@ -629,7 +629,7 @@ public class OCSAnalyticsController {
         try {
             // Verify user is admin
             Person admin = personRepository.findByUid(userDetails.getUsername());
-            if (admin == null || !admin.hasRoleWithName("ROLE_ADMIN")) {
+            if (admin == null || !admin.hasRole("ROLE_ADMIN")) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Only admins can access this endpoint");
             }

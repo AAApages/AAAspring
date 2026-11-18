@@ -106,7 +106,8 @@ class AssignmentAiGradingHackWeightsTest {
     private AssignmentAiGradingService weightedService() {
         ObjectMapper mapper = new ObjectMapper();
         AiProviderClient client = new AiProviderClient(mapper,
-                "http://127.0.0.1:" + github.getAddress().getPort() + "/gemini", "");
+                "http://127.0.0.1:" + github.getAddress().getPort() + "/gemini", "",
+                "http://127.0.0.1:" + github.getAddress().getPort() + "/groq/chat/completions");
         AiGradingRouter router = new AiGradingRouter(mock(AiConnectionService.class), client, "test-key", "");
         return new AssignmentAiGradingService(new ObjectMapper(), mock(FileHandler.class),
                 router, "http://unused", "", "");

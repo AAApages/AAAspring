@@ -38,12 +38,12 @@ public class AssignmentCreatorsMigration {
         return args -> {
             try {
                 jdbcTemplate.execute(
-                    "CREATE TABLE IF NOT EXISTS \"assignment_creators\" ("
-                        + "\"assignment_id\" bigint NOT NULL, "
-                        + "\"person_id\" bigint NOT NULL, "
-                        + "PRIMARY KEY (\"assignment_id\", \"person_id\"), "
-                        + "FOREIGN KEY (\"assignment_id\") REFERENCES \"assignment\" (\"id\"), "
-                        + "FOREIGN KEY (\"person_id\") REFERENCES \"person\" (\"id\"))");
+                    "CREATE TABLE IF NOT EXISTS assignment_creators ("
+                        + "assignment_id bigint NOT NULL, "
+                        + "person_id bigint NOT NULL, "
+                        + "PRIMARY KEY (assignment_id, person_id), "
+                        + "FOREIGN KEY (assignment_id) REFERENCES assignment (id), "
+                        + "FOREIGN KEY (person_id) REFERENCES person (id))");
             } catch (DataAccessException e) {
                 logger.warn("Could not create assignment creators table: {}", e.getMessage());
             }

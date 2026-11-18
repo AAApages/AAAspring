@@ -163,7 +163,7 @@ public class ScrapedResultController {
     }
 
     private boolean isTeacherOrAdmin(Person person) {
-        return person != null && (person.hasRoleWithName("ROLE_TEACHER") || person.hasRoleWithName("ROLE_ADMIN"));
+        return person != null && (person.hasRole("ROLE_TEACHER") || person.hasRole("ROLE_ADMIN"));
     }
 
     private String writeJsonOrNull(Object value) {

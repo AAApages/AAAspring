@@ -61,8 +61,10 @@ public interface PersonJpaRepository extends JpaRepository<Person, Long> {
             nativeQuery = true)
     List<Person> findByLikeTermNative(String term);
 
-    @Query("SELECT p FROM Person p JOIN p.roles r WHERE r.name = :roleName")
-    List<Person> findPeopleWithRole(@Param("roleName") String roleName);
+    /** The people who have this role. Roles are stored as JSON on the person, so the filter is here, not in SQL. */
+    default List<Person> findPeopleWithRole(String roleName) {
+        return findAll().stream().filter(person -> person.hasRole(roleName)).toList();
+    }
 
     @Query("SELECT p FROM Person p WHERE id BETWEEN :id0 AND :id1")
     List<Person> findAllByIdBetween(@Param("id0") Long id0, @Param("id1") Long id1);
