@@ -281,12 +281,39 @@
 
     function presetById(id) { return presets.find(p => p.id === id) || { urlEditable: true }; }
 
+    // Fills the model dropdowns from the server's model list, keeping the current choices.
+    let modelRequest = 0;
+    async function loadModels() {
+        const url = $('ngUrl').value.trim();
+        if (!canEdit || $('ngPreset').value === 'NONE' || !url) {
+            $('ngTestMsg').textContent = '';
+            return;
+        }
+        const request = ++modelRequest;
+        $('ngTestMsg').textContent = 'Loading models…';
+        try {
+            const r = await api('/api/night-grading/settings/test-connection',
+                json('POST', { url, apiKey: $('ngKey').value }));
+            if (request !== modelRequest) return; // A newer request (another server) replaced this one.
+            const primary = $('ngPrimary').value || r.models[0];
+            setOptions($('ngPrimary'), r.models, primary, '— choose —');
+            setOptions($('ngBackup'), r.models, $('ngBackup').value, 'None');
+            const missing = [primary, $('ngBackup').value].filter(m => m && !r.models.includes(m));
+            $('ngTestMsg').textContent = `Connected: ${r.models.length} model(s), ${r.elapsedMs} ms.`
+                + (missing.length ? ` Not on this server: ${missing.join(', ')}.` : '');
+        } catch (e) {
+            if (request !== modelRequest) return;
+            $('ngTestMsg').textContent = `Could not list models: ${e.message}`;
+        }
+    }
+
     function applyPreset(fill) {
         const preset = presetById($('ngPreset').value);
         const none = $('ngPreset').value === 'NONE';
         $('ngUrl').readOnly = !preset.urlEditable;
-        if (fill && !preset.urlEditable) $('ngUrl').value = preset.url || '';
-        if (fill && (preset.primaryModel || preset.backupModel)) {
+        if (fill && preset.url) $('ngUrl').value = preset.url;
+        if (fill) {
+            // Models from the previous server don't apply to this one.
             setOptions($('ngPrimary'), [preset.primaryModel], preset.primaryModel, '— choose —');
             setOptions($('ngBackup'), [preset.backupModel], preset.backupModel, 'None');
         }
@@ -319,6 +346,7 @@
         $('ngChanged').textContent = s.updatedAt
             ? `Last changed by ${s.updatedBy || 'unknown'} at ${when(s.updatedAt)}.` : 'Using the server (.env) defaults.';
         applyPreset(false);
+        loadModels();
     }
 
     async function loadNight() {
@@ -333,19 +361,12 @@
     const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body) });
 
-    $('ngPreset').addEventListener('change', () => applyPreset(true));
-
-    $('ngTest').addEventListener('click', async () => {
-        $('ngTestMsg').textContent = 'Connecting…';
-        try {
-            const r = await api('/api/night-grading/settings/test-connection',
-                json('POST', { url: $('ngUrl').value, apiKey: $('ngKey').value }));
-            setOptions($('ngPrimary'), r.models, $('ngPrimary').value || r.models[0], '— choose —');
-            setOptions($('ngBackup'), r.models, $('ngBackup').value, 'None');
-            $('ngTestMsg').textContent = `Connected: ${r.models.length} model(s), ${r.elapsedMs} ms.`;
-        } catch (e) {
-            $('ngTestMsg').textContent = e.message;
-        }
+    $('ngPreset').addEventListener('change', () => { applyPreset(true); loadModels(); });
+    $('ngUrl').addEventListener('change', loadModels);
+    $('ngTest').addEventListener('click', loadModels);
+    // Choosing a model changes nothing until Save; say so, since a dropdown alone looks like it did nothing.
+    $('nightFields').addEventListener('change', ev => {
+        if (ev.target.id !== 'ngTest') $('ngFormMsg').textContent = 'Unsaved changes: click Save to apply them.';
     });
 
     $('nightForm').addEventListener('submit', async ev => {

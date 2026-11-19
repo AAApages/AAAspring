@@ -257,6 +257,26 @@ class AssignmentNightGradingServiceTest {
         assertEquals("busy", night.startNow().status());
     }
 
+    @Test
+    void aDaytimeTickDuringAManualPassDoesNotRetryAFailedItem() {
+        queued.add(submissionRow(1, 5));
+        when(settings.isNightWindowOpen()).thenReturn(false);
+        int[] calls = {0};
+        when(queue.gradeOnce(1L, homework, true, true)).thenAnswer(call -> {
+            night.tick(); // The scheduled tick fires while the slow model is grading.
+            if (++calls[0] > 3) {
+                queued.clear(); // Without the fix the pass would loop forever; stop it here.
+            }
+            return GradingOutcome.AI_FAILED;
+        });
+
+        night.startNow();
+
+        assertEquals(1, calls[0]);
+        assertEquals(1, night.status().lastRun().failed());
+        assertEquals("no work left", night.status().lastRun().endReason());
+    }
+
     /** The daytime paths stay off the paid models during the night window. */
     @Nested
     class DaytimePathsAtNight {

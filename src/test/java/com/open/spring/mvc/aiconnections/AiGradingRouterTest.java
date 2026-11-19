@@ -260,9 +260,12 @@ class AiGradingRouterTest {
             settings.reset("toby");
             assertEquals(AiHouseSettingsRepository.Preset.NONE, settings.current().preset());
         }
-        @Test void presetUrlIsUsedUnlessCustom() {
-            settings.save(changes("OLLAMA", "http://ignored.test/v1", "qwen3:32b", "", null, false), "toby");
-            assertEquals("http://localhost:11434/v1", settings.current().baseUrl());
+        @Test void presetUrlIsADefaultTheAdminCanChange() {
+            // In Docker, localhost is the container, so the preset's URL must not be forced.
+            settings.save(changes("OLLAMA", "http://gpu.test:11434/v1/", "qwen3:32b", "", null, false), "toby");
+            assertEquals("http://gpu.test:11434/v1", settings.current().baseUrl());
+            settings.save(changes("NONE", "http://ignored.test/v1", "qwen3:32b", "", null, false), "toby");
+            assertEquals("", settings.current().baseUrl());
         }
         @Test void apiKeyIsStoredEncryptedAndNeverInTheSettings() throws Exception {
             settings.save(changes("CUSTOM", "http://gpu.test/v1", "qwen", "", "secret-key", false), "toby");

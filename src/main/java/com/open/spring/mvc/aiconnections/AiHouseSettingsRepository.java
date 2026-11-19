@@ -41,7 +41,9 @@ public class AiHouseSettingsRepository implements ApplicationRunner {
 
     /**
      * Model servers offered in the settings dropdown. When the school GPU box is set up, add a
-     * line here with its URL and models and it appears in the dropdown, filled in.
+     * line here with its URL and models and it appears in the dropdown, filled in. The URL is only
+     * a starting point the admin can change: inside the Docker container localhost is the
+     * container itself, not the GPU box.
      */
     public enum Preset {
         NONE("None (night grading only reports, grades nothing)", "", "", ""),
@@ -62,7 +64,7 @@ public class AiHouseSettingsRepository implements ApplicationRunner {
         public String url() { return url; }
         public String primaryModel() { return primaryModel; }
         public String backupModel() { return backupModel; }
-        public boolean urlEditable() { return this == CUSTOM; }
+        public boolean urlEditable() { return this != NONE; }
 
         static Preset parse(String value) {
             try { return value == null || value.isBlank() ? null : valueOf(value.trim().toUpperCase()); }

@@ -99,7 +99,11 @@ public class AssignmentNightGradingService {
     public void tick() {
         try {
             if (!settings.isNightWindowOpen()) {
-                attempted.clear(); // A new night retries everything.
+                // A new night retries everything. Not while a manual daytime pass runs, or it would
+                // retry a failing item forever and keep the cloud queue waiting.
+                if (worker == null) {
+                    attempted.clear();
+                }
                 return;
             }
             lastCheckAt = Instant.now();
