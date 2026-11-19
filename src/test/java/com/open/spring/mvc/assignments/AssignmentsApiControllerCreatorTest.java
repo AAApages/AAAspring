@@ -467,7 +467,7 @@ class AssignmentsApiControllerCreatorTest {
             org.mockito.ArgumentCaptor<Assignment> saved = org.mockito.ArgumentCaptor.forClass(Assignment.class);
             verify(assignmentRepo).save(saved.capture());
             Assignment created = saved.getValue();
-            created.setAiRubric("Score 0.9: great\nScore 0.5: ok\nScore 0: missing");
+            created.setAiRubric("Score 0.93: exceptional\nScore 0.5: ok\nScore 0: missing");
             List<AssignmentRubricService.Check> checks = AssignmentRubricService.runChecks(created, List.of());
             assertTrue(checks.stream().allMatch(AssignmentRubricService.Check::ok), checks.toString());
         }
@@ -526,8 +526,11 @@ class AssignmentsApiControllerCreatorTest {
     @Nested
     class RegradeService {
         private static final String READY_RUBRIC = """
-                Score 0.9 — Strong / Exceptional
-                Great.
+                Score 0.93 — Exceptional
+                Beyond the requirements.
+
+                Score 0.9 — Strong
+                Complete.
 
                 **Score 0.75 — Adequate**
                 Fine.
@@ -566,21 +569,48 @@ class AssignmentsApiControllerCreatorTest {
         }
 
         @Test
-        void acceptsTiersUpToNinetyPercentIncludingMarkdownHeadings() {
+        void acceptsTiersUpToNinetyThreePercentIncludingMarkdownHeadings() {
             assertTrue(AssignmentRubricService.isAiRubricReady(READY_RUBRIC, 1.0));
             assertTrue(AssignmentRubricService.isAiRubricReady(READY_RUBRIC, null));
         }
 
         @Test
-        void rejectsTiersAboveNinetyPercentOfPoints() {
+        void rejectsTiersAboveNinetyThreePercentOfPoints() {
             assertFalse(AssignmentRubricService.isAiRubricReady("Score 1.0 — Strong\nx\nScore 0.8 — Adequate\n", 1.0));
             String fourPoint = "Score 4 — Strong\nx\nScore 3 — Adequate\nx\nScore 2 — Limited\n";
             assertFalse(AssignmentRubricService.isAiRubricReady(fourPoint, 1.0));
-            // An old 1-4 rubric is only trusted when its top tier matches 90% of the points.
+            // An old 1-4 rubric is only trusted when its top tier matches 93% of the points.
             assertFalse(AssignmentRubricService.isAiRubricReady(fourPoint, 5.0));
             assertFalse(AssignmentRubricService.isAiRubricReady(fourPoint, 100.0));
-            assertTrue(AssignmentRubricService.isAiRubricReady("Score 4.5 — Strong\nx\nScore 3 — Adequate\n", 5.0));
-            assertEquals(0.9, AssignmentRubricService.aiTopScore(AssignmentRubricService.maxScore(null)));
+            assertTrue(AssignmentRubricService.isAiRubricReady("Score 4.65 — Exceptional\nx\nScore 4.5 — Strong\n", 5.0));
+            assertEquals(0.93, AssignmentRubricService.aiTopScore(AssignmentRubricService.maxScore(null)));
+        }
+
+        @Test
+        void oldRubricDoesNotQueuePreviouslyGradedSubmissions() throws Exception {
+            when(jdbcTemplate.queryForList(anyString())).thenReturn(List.of());
+
+            service().runOnce();
+
+            verifyNoInteractions(assignmentRepo, rubricService, aiGradingService, gradingService);
+            verify(jdbcTemplate, never()).update(anyString(), org.mockito.ArgumentMatchers.<Object[]>any());
+        }
+
+        @Test
+        void refreshesAnOldRubricForAnAlreadyQueuedSubmission() throws Exception {
+            Assignment assignment = assignment("Score 0.9 — Strong / Exceptional\nGreat.\nScore 0.8 — Adequate\nFine.");
+            flagged(10L);
+            when(assignmentRepo.findById(1L)).thenReturn(Optional.of(assignment));
+            when(rubricService.generateRubric(any(), any(), any(), eq(1.0))).thenReturn(READY_RUBRIC);
+            when(submissionRepo.findById(10L)).thenReturn(Optional.of(submission(10L, true)));
+            when(aiGradingService.grade(any()))
+                    .thenReturn(AssignmentAiGradingService.GradeResult.graded(0.93, 4, "Exceptional extension.", false));
+
+            service().runOnce();
+
+            verify(jdbcTemplate).update("UPDATE assignment SET ai_rubric = ? WHERE id = ?", READY_RUBRIC, 1L);
+            verify(gradingService).recordAiGrade(eq(10L), eq(AssignmentSubmission.FIRST_REVISION), any());
+            assertEquals(READY_RUBRIC, assignment.getAiRubric());
         }
 
         // ---- re-grade job ----

@@ -112,11 +112,26 @@ public class AssignmentRubricService {
     }
 
     /**
-     * The highest score the AI may give: 90% of the points. Full marks are rare and left
-     * for the teacher to award by hand.
+     * The highest score the AI may give: 93% of the points, reserved for exceptional work.
+     * Full marks remain available to the teacher.
      */
     public static double aiTopScore(double maxScore) {
-        return Math.round(maxScore * 0.9 * 100.0) / 100.0;
+        return scaledScore(maxScore, 0.93);
+    }
+
+    private static double scaledScore(double maxScore, double fraction) {
+        return Math.round(maxScore * fraction * 100.0) / 100.0;
+    }
+
+    /** Shared scoring instructions for rubric generation and submission grading. */
+    static String gradingPolicy(double maxScore) {
+        return """
+                GRADING POLICY
+                Strong work earns %s (90%% of the maximum): every core requirement must be met correctly, with all or nearly all remaining rubric criteria covered. Minor omissions or imperfections are allowed only when they do not undermine a core requirement. Missing or incorrect core requirements must score below the Strong tier.
+                Award the Strong score without requiring extra depth, verbosity, polish, or advanced techniques. Accept concise answers and equivalent correct approaches that demonstrate the required understanding.
+                Scores above the Strong tier, up to %s (93%% of the maximum), require all stated requirements to be met plus demonstrated, relevant value beyond them, such as meaningful extensions, deeper analysis, or useful edge-case handling. Extra length alone does not qualify.
+                Grade only stated requirements; do not invent implied requirements. Award proportional partial credit for demonstrated understanding, and do not deduct repeatedly for the same underlying error. Style and documentation affect the score only when explicitly required. Unattempted required work may score zero; the lowest rubric tier is not a minimum grade.
+                """.formatted(formatScore(scaledScore(maxScore, 0.9)), formatScore(aiTopScore(maxScore)));
     }
 
     /**
@@ -142,7 +157,9 @@ public class AssignmentRubricService {
             highest = Math.max(highest, tier);
             tiers++;
         }
-        return tiers >= 2 && max - highest <= Math.max(0.01, max * 0.01);
+        // Compare to the rounded cap itself: a percentage tolerance accepts old 90% rubrics
+        // on small assignments. Only floating-point representation needs a tolerance here.
+        return tiers >= 2 && Math.abs(max - highest) <= 1e-9;
     }
 
     /** Submission types the submit endpoints understand (Assignment#assignmentType). */
@@ -292,39 +309,44 @@ public class AssignmentRubricService {
                 ASSIGNMENT PAGE CONTENT:
                 %s
 
-                Write a thorough, detailed grading rubric with exactly four tiers. Scale every tier to the assignment maximum score above; do not use a fixed 4-point or 5-point scale. Full marks are reserved for the teacher, so the highest tier must be exactly %s (90%% of the maximum), and every score must be numeric and use the same units as the assignment. For example, when the maximum is 1, valid tier scores could be values such as 0.9, 0.8, 0.77, and 0.55. Choose sensible score thresholds for this assignment rather than copying those example values. Mirror this structure and tone, replacing the indicators with specifics grounded in the assignment content:
+                Write an assignment-specific rubric with exactly five tiers at the numeric scores below. The tiers are 93%%, 90%%, 80%%, 70%%, and 55%% of the assignment maximum, rounded to two decimal places. Use the assignment's units, not a fixed 4-point or 5-point scale. Full marks remain available to the teacher. Replace each description and indicator with specifics grounded in this assignment's stated requirements.
 
-                Score %s — Strong / Exceptional
-                <2-4 sentences describing what a submission that fully and impressively meets THIS assignment's requirements looks like>
+                %s
 
-                Indicators:
-                 <specific indicator 1 for this assignment>
-                 <specific indicator 2>
-                 <specific indicator 3>
-                 <specific indicator 4>
-
-                Score <score below the strong tier> — Adequate
-                <2-4 sentences describing a submission that meets the core requirement but lacks depth>
+                Score %s — Exceptional
+                <Describe correct completion of all stated requirements plus demonstrated, relevant value beyond them. Give examples of meaningful extensions, deeper analysis, or useful edge-case handling for this assignment; these are optional for the Strong tier.>
 
                 Indicators:
-                 <specific indicator 1>
-                 <specific indicator 2>
-                 <specific indicator 3>
+                 <all stated requirements met correctly>
+                 <evidence of relevant additional value beyond those requirements>
 
-                Score <score below the adequate tier> — Limited
-                <2-4 sentences describing a partial or shallow submission for THIS assignment>
-
-                Indicators:
-                 <specific indicator 1>
-                 <specific indicator 2>
-                 <specific indicator 3>
-
-                Score <lowest meaningful score> — Insufficient
-                <2-4 sentences describing a submission that fails to address THIS assignment's core requirement>
+                Score %s — Strong
+                <Describe correct completion of every core requirement and all or nearly all remaining criteria. Allow minor omissions or imperfections that do not undermine a core requirement. Concise, correct work qualifies without optional extensions.>
 
                 Indicators:
-                 <specific indicator 1>
-                 <specific indicator 2>
+                 <each core requirement for this assignment>
+                 <remaining criteria, allowing only minor gaps>
+
+                Score %s — Adequate
+                <Describe substantial correct work with a meaningful gap in a core requirement or several omissions across other criteria. Do not require optional depth or enhancements.>
+
+                Indicators:
+                 <substantial correct work that earns partial credit>
+                 <meaningful gaps preventing the Strong tier>
+
+                Score %s — Limited
+                <Describe partial work with important requirements missing or incorrect.>
+
+                Indicators:
+                 <demonstrated understanding that earns partial credit>
+                 <important missing or incorrect requirements>
+
+                Score %s — Insufficient
+                <Describe work that fails to meaningfully address the core requirements. Missing required work can score zero, below this anchor.>
+
+                Indicators:
+                 <core requirements largely unaddressed>
+                 <little relevant evidence or understanding>
 
                 Return ONLY the rubric text in the structure above — no preamble, no JSON, no markdown code fences.
                 """.formatted(
@@ -333,8 +355,12 @@ public class AssignmentRubricService {
                 formatScore(maxScore),
                 hackWeighting,
                 limitPageContent(pageContent),
+                gradingPolicy(maxScore),
                 formatScore(aiTopScore(maxScore)),
-                formatScore(aiTopScore(maxScore)));
+                formatScore(scaledScore(maxScore, 0.9)),
+                formatScore(scaledScore(maxScore, 0.8)),
+                formatScore(scaledScore(maxScore, 0.7)),
+                formatScore(scaledScore(maxScore, 0.55)));
     }
 
     private String limitPageContent(String pageContent) {

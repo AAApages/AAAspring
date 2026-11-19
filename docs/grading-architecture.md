@@ -139,6 +139,30 @@ A grader can also act on the new revision without a petition: give a new grade, 
 - An AI re-evaluation during a review is stored on the review only and never changes the grade.
 - A submission has at most one open review at a time, whether a teacher opened it or a student petitioned.
 
+## AI scoring policy
+
+AI scores are capped at 93% of assignment points. The default rubric and generated
+assignment rubrics use five anchors: Exceptional (93%), Strong (90%), Adequate
+(80%), Limited (70%), and Insufficient (55%), rounded to two decimal places on the
+assignment's points scale. Scores can fall between anchors or below the lowest
+anchor; unattempted required work can receive zero.
+
+Strong work correctly meets every core requirement and all or nearly all remaining
+criteria. Minor omissions are acceptable only when they do not undermine a core
+requirement. Concise answers and equivalent correct approaches qualify without
+optional depth, polish, or extensions. Above 90% requires all stated requirements
+plus demonstrated, relevant additional value; extra length alone does not qualify.
+Both Strong and Exceptional have quality 4. Quality 5 remains reserved for the
+separate batch review. Weighted hacks retain server-side aggregation, with each
+hack capped at 93%; omitted practice runners do not lower the score.
+
+`AssignmentRubricService.gradingPolicy` supplies the same instructions to rubric
+generation and grading. Rubrics with the old 90% ceiling are no longer ready and
+are refreshed by the existing generation flow. If a submission is graded before
+a usable assignment rubric is available, the updated default rubric applies.
+Deployment does not enqueue historical grades or change instructor overrides;
+the policy takes effect on subsequent grading requests and existing queued work.
+
 ## REST operations
 
 Every route requires a signed-in account.

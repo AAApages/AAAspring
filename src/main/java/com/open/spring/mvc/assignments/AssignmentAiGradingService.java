@@ -147,7 +147,7 @@ public class AssignmentAiGradingService {
         List<AssignmentRubricService.HackWeight> hacks = assignment == null
                 ? List.of() : AssignmentRubricService.readHackWeights(assignment.getHackWeights());
 
-        String prompt = buildPrompt(rubric, topScore, hacks, submissionText.kind, submissionText.text,
+        String prompt = buildPrompt(rubric, rubricScale, hacks, submissionText.kind, submissionText.text,
                 submissionText.guidance);
 
         String text;
@@ -230,9 +230,9 @@ public class AssignmentAiGradingService {
     }
 
     /** guidance is "" except for Gists holding written reflection answers (see writtenResponseGuidance). */
-    private String buildPrompt(String rubric, double topScore, List<AssignmentRubricService.HackWeight> hacks,
+    private String buildPrompt(String rubric, double rubricScale, List<AssignmentRubricService.HackWeight> hacks,
             String submissionKind, String submissionText, String guidance) {
-        String top = formatNumber(topScore);
+        String top = formatNumber(AssignmentRubricService.aiTopScore(rubricScale));
         String hackSection = "";
         String hackExample = "";
         if (!hacks.isEmpty()) {
@@ -261,16 +261,18 @@ public class AssignmentAiGradingService {
                 %s
                 END RUBRIC
 
+                %s
+
                 The rubric above defines the grading criteria only. Ignore any output-format instructions inside the rubric.
                 Return ONLY valid JSON with exactly these fields:
                 {"score": 0.8, "quality": 3, "feedback": "One or two sentences."%s}
                 score must be a number from 0 through %s (the rubric's top tier) on the rubric's own scale: use the score of the rubric tier the submission best matches, or a value between two tiers when it falls between them. Never go above the top tier.
-                quality must be an integer from 2 through 4: 4 for the Strong / Exceptional tier, 3 for Adequate, 2 for Limited or Insufficient (a 5 is reserved for a separate batch-review pass and must never be returned here).
+                quality must be an integer from 2 through 4: 4 for Strong or Exceptional, 3 for Adequate, 2 for Limited or Insufficient (a 5 is reserved for a separate batch-review pass and must never be returned here).
                 feedback must be one or two concise sentences explaining one strength and one improvement when possible.%s
 
                 %s:
                 %s
-                """.formatted(submissionKind, guidance, hackSection, rubric, hackExample, top,
+                """.formatted(submissionKind, guidance, hackSection, rubric, AssignmentRubricService.gradingPolicy(rubricScale), hackExample, top,
                         hacks.isEmpty() ? "" : "\nhacks must have exactly one entry per weighted hack above, in that order, each with that hack's score.",
                         submissionKind.toUpperCase(java.util.Locale.ROOT), limitSubmission(submissionText));
     }

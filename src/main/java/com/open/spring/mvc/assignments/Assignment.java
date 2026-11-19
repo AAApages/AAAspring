@@ -40,23 +40,29 @@ import lombok.Setter;
 @NoArgsConstructor
 public class Assignment {
     public static final String DEFAULT_AI_RUBRIC = """
-Score 0.9 — Strong / Exceptional
-The submission is clear, well-organized, and substantively complete. It directly addresses the core requirement and goes further by including specific, relevant details (examples, data, edge cases, or context) that demonstrate genuine understanding. Reasoning is explicit and logically connects the details to the conclusion — a reader does not need to infer missing steps. Minor imperfections are acceptable, but nothing essential is missing.
+Score 0.93 — Exceptional
+The submission meets all stated requirements correctly and demonstrates clear, relevant value beyond them, such as a meaningful extension, deeper analysis, or useful edge-case handling. Extra length, polish, or unrelated features alone do not qualify. Scores above 0.9 are reserved for demonstrated exceptional work, up to 0.93.
 
 Indicators:
- Fully addresses the prompt/requirement, including secondary or implied aspects
- Uses specific, relevant supporting details rather than generic statements
- Reasoning is explained, not just asserted
- Well-structured and easy to follow
+ All stated requirements are met correctly
+ Relevant additional work demonstrates understanding beyond the requirements
+ The additional value is supported by evidence in the submission
+
+Score 0.9 — Strong
+The submission correctly meets every core requirement and all or nearly all remaining rubric criteria. Minor omissions or imperfections are acceptable when they do not undermine a core requirement. Clear, concise work and equivalent correct approaches qualify; extra depth, verbosity, or advanced techniques are not required.
+
+Indicators:
+ Every core requirement is met correctly
+ All or nearly all remaining criteria are covered, with only minor gaps
+ Sufficient evidence demonstrates the required understanding
 
 Score 0.8 — Adequate
-The submission addresses the main requirement and is generally correct, but is noticeably thinner than a 0.9. It may rely on general statements rather than specific details, skip minor aspects of the prompt, or leave some reasoning implicit. A reader can follow it without major confusion, but it lacks the depth, precision, or supporting evidence of a top submission.
+The submission demonstrates substantial correct work but has a meaningful gap in a core requirement or several omissions across the remaining criteria. Award proportional partial credit for demonstrated understanding. Do not lower otherwise strong work to this tier merely because it is concise or lacks optional enhancements.
 
 Indicators:
- Core requirement is met; response is accurate
- Some relevant detail or context present, but not comprehensive
- Reasoning is present but may be brief or partially assumed
- Minor gaps that don't undermine the overall response
+ Substantial correct work addresses the assignment
+ A core requirement is only partly met, or several other criteria are missing
+ Demonstrated understanding earns credit despite the gaps
 
 Score 0.7 — Limited
 The submission is partial or shallow. It may address only part of the requirement, provide information without explaining its relevance, or offer a conclusion with little to no supporting reasoning. Important details are missing or vague, and the response reads as incomplete or underdeveloped rather than simply concise.
